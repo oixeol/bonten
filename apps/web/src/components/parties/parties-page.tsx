@@ -93,6 +93,9 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
   const [queueNow, setQueueNow] = useState(Date.now());
   const [groupCodeCopied, setGroupCodeCopied] = useState(false);
   const [roleSaving, setRoleSaving] = useState(false);
+  const [matchAccepting, setMatchAccepting] = useState(false);
+  const [matchAccepted, setMatchAccepted] = useState(false);
+  const [matchStarted, setMatchStarted] = useState(false);
 
   const lobbySlots: (PartyCardUser | null)[] = Array.from({ length: PARTY_CAPACITY }, () => null);
   if (user) {
@@ -204,16 +207,26 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
   useEffect(() => {
     if (!queueEntry) return;
     const timerId = window.setInterval(() => setQueueNow(Date.now()), 1000);
-    const pollId = window.setInterval(() => {
-      matchmakingApi.status().then(setQueueEntry).catch((err) => {
+    const pollId = window.setInterval(async () => {
+      try {
+        const status = await matchmakingApi.status();
+        setQueueEntry(status);
+        if (status?.matchId) {
+          const match = await matchmakingApi.getMatch(status.matchId);
+          setMatchAccepted(Boolean(match.players?.some((player: { userId: string; acceptedAt: string | null }) => (
+            player.userId === user?.id && player.acceptedAt
+          ))));
+          setMatchStarted(match.status === 'in_progress');
+        }
+      } catch (err) {
         setLobbyError(err instanceof Error ? err.message : 'Não foi possível atualizar a fila.');
-      });
+      }
     }, 3000);
     return () => {
       window.clearInterval(timerId);
       window.clearInterval(pollId);
     };
-  }, [queueEntry?.id]);
+  }, [queueEntry?.id, user?.id]);
 
   const handleCreate = async () => {
     if (!selectedGame) return;
@@ -299,6 +312,8 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
       );
       setQueueEntry(entry);
       setQueueNow(Date.now());
+      setMatchAccepted(false);
+      setMatchStarted(false);
       setMyParty((current) => current ? {
         ...current,
         status: 'in_queue',
@@ -351,11 +366,28 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
     try {
       await matchmakingApi.leaveQueue();
       setQueueEntry(null);
+      setMatchAccepted(false);
+      setMatchStarted(false);
       setMyParty((current) => current ? { ...current, status: 'lobby' } : current);
     } catch (err) {
       setLobbyError(err instanceof Error ? err.message : 'Não foi possível cancelar a busca.');
     } finally {
       setQueueLoading(false);
+    }
+  };
+
+  const handleAcceptMatch = async () => {
+    if (!queueEntry?.matchId) return;
+    setMatchAccepting(true);
+    setLobbyError(null);
+    try {
+      const result = await matchmakingApi.acceptMatch(queueEntry.matchId);
+      setMatchAccepted(true);
+      setMatchStarted(result.matchStarted);
+    } catch (err) {
+      setLobbyError(err instanceof Error ? err.message : 'Não foi possível confirmar presença.');
+    } finally {
+      setMatchAccepting(false);
     }
   };
 
@@ -568,11 +600,18 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
                 <>
                   {queueEntry.status === 'waiting' && <Loader2 size={26} className="animate-spin text-brand" />}
                   <p className="text-sm font-semibold text-fg">
-                    {queueEntry.status === 'matched' ? 'Partida encontrada' : 'Procurando partida...'}
+                    {queueEntry.status === 'matched'
+                      ? matchStarted ? 'Partida iniciada' : matchAccepted ? 'Presença confirmada' : 'Partida encontrada'
+                      : 'Procurando partida...'}
                   </p>
                   <p className="font-mono text-2xl tabular-nums text-brand" aria-live="polite">
                     {formatQueueDuration(queueEntry.joinedAt, queueNow)}
                   </p>
+                  {queueEntry.status === 'matched' && !matchAccepted && (
+                    <Button type="button" onClick={() => void handleAcceptMatch()} disabled={matchAccepting}>
+                      {matchAccepting ? <Loader2 size={16} className="animate-spin" /> : <><Check size={16} /> Confirmar presença</>}
+                    </Button>
+                  )}
                   {queueEntry.status === 'waiting' && (
                     <Button type="button" variant="danger" onClick={() => void handleLeaveQueue()} disabled={queueLoading}>
                       {queueLoading ? <Loader2 size={16} className="animate-spin" /> : <><XIcon size={16} /> Cancelar busca</>}

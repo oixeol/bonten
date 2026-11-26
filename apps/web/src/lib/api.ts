@@ -484,6 +484,7 @@ export interface MatchmakingQueueEntry {
   userId: string | null;
   status: 'waiting' | 'matched' | 'cancelled';
   joinedAt: string;
+  matchId: string | null;
   game?: { id: string; slug: string; name: string };
 }
 
@@ -543,6 +544,7 @@ export interface Game {
   name: string;
   format: string;
   teamSize: number;
+  playersPerMatch?: number;
   partySizesAllowed: number[];
   hasMaps: boolean;
   hasTeams: boolean;

@@ -5,7 +5,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { assignTeamRoles, findMatchGroups, QueueMatchMember } from './matchmaker';
 
 @Injectable()
 export class MatchmakingService {
@@ -36,7 +38,13 @@ export class MatchmakingService {
 
       const game = await tx.game.findUnique({
         where: { id: gameId },
-        select: { partySizesAllowed: true, slug: true },
+        select: {
+          partySizesAllowed: true,
+          slug: true,
+          playersPerMatch: true,
+          teamSize: true,
+          hasTeams: true,
+        },
       });
       if (!game) throw new NotFoundException('Game not found');
       if (secondaryRole && !primaryRole) {
@@ -104,10 +112,102 @@ export class MatchmakingService {
         })),
       });
 
-      return queueEntry;
+      const matchId = await this.createMatchIfReady(tx, gameId, mode, region, game);
+      if (!matchId) return queueEntry;
+      const matchedEntry = await tx.matchmakingQueue.findUnique({ where: { id: queueEntry.id } });
+      if (!matchedEntry) throw new NotFoundException('Queue entry not found after match creation');
+      return matchedEntry;
     });
 
     return entry;
+  }
+
+  private async createMatchIfReady(
+    tx: Prisma.TransactionClient,
+    gameId: string,
+    mode: string,
+    region: string,
+    game: { playersPerMatch: number; teamSize: number; hasTeams: boolean },
+  ) {
+    const scope = `${gameId}:${mode}:${region}`;
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${scope}, 0))`;
+
+    const lockedQueueEntries = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "matchmaking_queues"
+      WHERE "gameId" = ${gameId}::uuid
+        AND "mode" = ${mode}
+        AND "region" = ${region}
+        AND "status" = 'waiting'
+      ORDER BY "joinedAt" ASC, "id" ASC
+      LIMIT 100
+      FOR UPDATE SKIP LOCKED
+    `;
+    const queueIds = lockedQueueEntries.map(({ id }) => id);
+    if (queueIds.length === 0) return null;
+
+    const queuedGroups = await tx.matchmakingQueue.findMany({
+      where: { id: { in: queueIds } },
+      orderBy: [{ joinedAt: 'asc' }, { id: 'asc' }],
+      include: {
+        members: {
+          select: { userId: true, primaryRole: true, secondaryRole: true },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    const assignments = findMatchGroups(
+      queuedGroups.map((entry) => ({ id: entry.id, members: entry.members })),
+      game.playersPerMatch,
+      game.hasTeams,
+      game.teamSize,
+    );
+    if (!assignments) return null;
+
+    const match = await tx.match.create({
+      data: { gameId, mode, region, status: 'pending' },
+    });
+    const matchPlayers: Array<{
+      matchId: string;
+      userId: string;
+      team: 'A' | 'B' | null;
+      role: string | null;
+    }> = [];
+
+    if (game.hasTeams) {
+      for (const team of ['A', 'B'] as const) {
+        const members = assignments
+          .filter((assignment) => assignment.team === team)
+          .flatMap((assignment) => assignment.group.members);
+        const roles = assignTeamRoles(members);
+        members.forEach((member: QueueMatchMember, index) => {
+          matchPlayers.push({
+            matchId: match.id,
+            userId: member.userId,
+            team,
+            role: roles[index] ?? null,
+          });
+        });
+      }
+    } else {
+      for (const assignment of assignments) {
+        for (const member of assignment.group.members) {
+          matchPlayers.push({ matchId: match.id, userId: member.userId, team: null, role: null });
+        }
+      }
+    }
+
+    await tx.matchPlayer.createMany({ data: matchPlayers });
+    await tx.matchResult.create({ data: { matchId: match.id } });
+    const updatedQueueEntries = await tx.matchmakingQueue.updateMany({
+      where: { id: { in: assignments.map(({ group }) => group.id) }, status: 'waiting' },
+      data: { status: 'matched', matchId: match.id },
+    });
+    if (updatedQueueEntries.count !== assignments.length) {
+      throw new ConflictException('Queue entries changed while creating the match');
+    }
+
+    return match.id;
   }
 
   async leaveQueue(userId: string) {
@@ -155,32 +255,32 @@ export class MatchmakingService {
   }
 
   async acceptMatch(matchId: string, userId: string) {
-    const match = await this.prisma.match.findUnique({ where: { id: matchId } });
-    if (!match) throw new NotFoundException('Match not found');
-    if (match.status !== 'pending') throw new ConflictException('Match is not awaiting confirmation');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "matches" WHERE "id" = ${matchId}::uuid FOR UPDATE`;
+      const match = await tx.match.findUnique({ where: { id: matchId } });
+      if (!match) throw new NotFoundException('Match not found');
+      if (match.status !== 'pending') throw new ConflictException('Match is not awaiting confirmation');
 
-    const player = await this.prisma.matchPlayer.findFirst({
-      where: { matchId, userId },
+      const player = await tx.matchPlayer.findFirst({ where: { matchId, userId } });
+      if (!player) throw new ForbiddenException('Not a participant');
+
+      await tx.matchPlayer.updateMany({
+        where: { matchId, userId, acceptedAt: null },
+        data: { acceptedAt: new Date() },
+      });
+
+      const acceptedPlayers = await tx.matchPlayer.count({ where: { matchId, acceptedAt: { not: null } } });
+      const totalPlayers = await tx.matchPlayer.count({ where: { matchId } });
+      const matchStarted = totalPlayers > 0 && acceptedPlayers === totalPlayers;
+      if (matchStarted) {
+        await tx.match.update({
+          where: { id: matchId },
+          data: { status: 'in_progress', startedAt: new Date() },
+        });
+      }
+
+      return { accepted: true, matchStarted };
     });
-    if (!player) throw new ForbiddenException('Not a participant');
-
-    const result = await this.prisma.matchResult.findUnique({ where: { matchId } });
-    if (!result) throw new NotFoundException('Match result not found');
-
-    // Determine which team the player is on
-    const isTeamA = player.team === 'A';
-    await this.prisma.matchResult.update({
-      where: { matchId },
-      data: isTeamA ? { confirmedByA: true } : { confirmedByB: true },
-    });
-
-    // Check if both confirmed
-    const updated = await this.prisma.matchResult.findUnique({ where: { matchId } });
-    if (updated?.confirmedByA && updated?.confirmedByB) {
-      await this.prisma.match.update({ where: { id: matchId }, data: { status: 'in_progress', startedAt: new Date() } });
-    }
-
-    return { accepted: true, matchStarted: updated?.confirmedByA && updated?.confirmedByB };
   }
 
   async declineMatch(matchId: string, userId: string) {
@@ -197,6 +297,22 @@ export class MatchmakingService {
         data: { status: 'cancelled' },
       });
       if (updated.count !== 1) throw new ConflictException('Match is no longer awaiting confirmation');
+
+      const queueEntries = await tx.matchmakingQueue.findMany({
+        where: { matchId, status: 'matched' },
+        select: { id: true, partyId: true },
+      });
+      await tx.matchmakingQueue.updateMany({
+        where: { matchId, status: 'matched' },
+        data: { status: 'cancelled', matchId: null },
+      });
+      const partyIds = queueEntries.flatMap((entry) => entry.partyId ? [entry.partyId] : []);
+      if (partyIds.length > 0) {
+        await tx.party.updateMany({
+          where: { id: { in: partyIds }, status: 'in_queue' },
+          data: { status: 'lobby' },
+        });
+      }
     });
 
     return { declined: true };
