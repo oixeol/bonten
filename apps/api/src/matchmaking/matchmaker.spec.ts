@@ -73,4 +73,41 @@ describe('matchmaker', () => {
 
     expect(result).toBeNull();
   });
+
+  it('balances team rating totals without splitting parties', () => {
+    const ratings = [2000, 1900, 1800, 1700, 1600, 1400, 1300, 1200, 1100, 1000];
+    const groups = ratings.map((rating, index) => ({
+      id: `player-${index}`,
+      members: [{ userId: `user-${index}`, role: null, rating }],
+    }));
+
+    const result = findMatchGroups(groups, 10, true, 5);
+    const ratingByTeam = result?.reduce(
+      (totals, assignment) => {
+        totals[assignment.team!] += assignment.group.members[0].rating ?? 1000;
+        return totals;
+      },
+      { A: 0, B: 0 } as Record<'A' | 'B', number>,
+    );
+
+    expect(Math.abs((ratingByTeam?.A ?? 0) - (ratingByTeam?.B ?? 0))).toBe(0);
+  });
+
+  it('widens its allowed rating window as the anchor group waits', () => {
+    const groups = [
+      { id: 'oldest', members: [{ userId: 'old', role: null, rating: 1000 }] },
+      { id: 'nearby', members: [{ userId: 'near', role: null, rating: 1000 }] },
+      { id: 'distant-a', members: [{ userId: 'far-a', role: null, rating: 1600 }] },
+      { id: 'distant-b', members: [{ userId: 'far-b', role: null, rating: 1600 }] },
+    ];
+
+    expect(findMatchGroups(groups, 4, true, 2, [], {
+      anchorGroupId: 'oldest',
+      maxRatingDelta: 100,
+    })).toBeNull();
+    expect(findMatchGroups(groups, 4, true, 2, [], {
+      anchorGroupId: 'oldest',
+      maxRatingDelta: 800,
+    })).not.toBeNull();
+  });
 });

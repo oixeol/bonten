@@ -646,6 +646,7 @@ model MatchmakingQueueMember {
   userId        String            @db.Uuid
   user          User              @relation("MatchmakingQueueMemberUser", fields: [userId], references: [id], onDelete: Cascade)
   role          String?
+  ratingSnapshot Int              @default(1000)
   createdAt     DateTime          @default(now())
 
   @@unique([queueId, userId])

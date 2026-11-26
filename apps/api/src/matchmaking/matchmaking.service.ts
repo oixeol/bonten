@@ -92,6 +92,29 @@ export class MatchmakingService {
         }
       }
 
+      const ratings = await tx.playerRating.findMany({
+        where: {
+          userId: { in: members.map((member) => member.userId) },
+          gameId,
+          mode,
+          OR: [{ seasonId: null }, { season: { is: { active: true } } }],
+        },
+        select: {
+          userId: true,
+          rating: true,
+          season: { select: { active: true } },
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+      const ratingSnapshots = new Map<string, { rating: number; activeSeason: boolean }>();
+      for (const rating of ratings) {
+        const activeSeason = rating.season?.active ?? false;
+        const existing = ratingSnapshots.get(rating.userId);
+        if (!existing || (activeSeason && !existing.activeSeason)) {
+          ratingSnapshots.set(rating.userId, { rating: rating.rating, activeSeason });
+        }
+      }
+
       const queueScope = partyMember ? { partyId: partyMember.partyId } : { userId };
       const existingQueue = await tx.matchmakingQueue.findFirst({
         where: { ...queueScope, status: { in: ['waiting', 'matched'] } },
@@ -122,6 +145,7 @@ export class MatchmakingService {
           queueId: queueEntry.id,
           userId: member.userId,
           role: game.roles.length > 0 ? member.role : null,
+          ratingSnapshot: ratingSnapshots.get(member.userId)?.rating ?? 1000,
         })),
       });
 
@@ -177,17 +201,33 @@ export class MatchmakingService {
       orderBy: [{ joinedAt: 'asc' }, { id: 'asc' }],
       include: {
         members: {
-          select: { userId: true, role: true },
+          select: { userId: true, role: true, ratingSnapshot: true },
           orderBy: { createdAt: 'asc' },
         },
       },
     });
+    if (queuedGroups.length === 0) return null;
+    const oldestJoinedAt = queuedGroups[0].joinedAt
+      ? new Date(queuedGroups[0].joinedAt).getTime()
+      : Date.now();
+    const oldestWaitMs = Math.max(0, Date.now() - oldestJoinedAt);
+    const maxRatingDelta = Math.min(800, 150 + Math.floor(oldestWaitMs / 30_000) * 50);
     const assignments = findMatchGroups(
-      queuedGroups.map((entry) => ({ id: entry.id, members: entry.members })),
+      queuedGroups.map((entry) => ({
+        id: entry.id,
+        members: entry.members.map((member) => ({
+          userId: member.userId,
+          role: member.role,
+          rating: member.ratingSnapshot,
+        })),
+      })),
       game.playersPerMatch,
       game.hasTeams,
       game.teamSize,
       game.roles,
+      game.hasTeams
+        ? { anchorGroupId: queuedGroups[0].id, maxRatingDelta }
+        : {},
     );
     if (!assignments) return null;
 

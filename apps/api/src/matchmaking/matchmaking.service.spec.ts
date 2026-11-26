@@ -23,6 +23,7 @@ const tx = {
     updateMany: jest.fn(),
   },
   matchmakingQueueMember: { createMany: jest.fn() },
+  playerRating: { findMany: jest.fn() },
   match: { findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), updateMany: jest.fn(), update: jest.fn() },
   matchPlayer: { findFirst: jest.fn(), findMany: jest.fn(), count: jest.fn(), createMany: jest.fn(), updateMany: jest.fn() },
   matchResult: { create: jest.fn() },
@@ -64,6 +65,7 @@ describe('MatchmakingService queue admission', () => {
     tx.matchmakingQueue.findUnique.mockResolvedValue({ id: 'queue-entry', status: 'matched', matchId: 'match-id' });
     tx.matchmakingQueue.updateMany.mockResolvedValue({ count: 0 });
     tx.matchmakingQueueMember.createMany.mockResolvedValue({ count: 1 });
+    tx.playerRating.findMany.mockResolvedValue([]);
     tx.match.findFirst.mockResolvedValue(null);
     tx.match.findUnique.mockResolvedValue({ id: 'match-id', status: 'pending' });
     tx.match.create.mockResolvedValue({ id: 'match-id' });
@@ -161,7 +163,20 @@ describe('MatchmakingService queue admission', () => {
         queueId: 'queue-entry',
         userId,
         role: 'mid',
+        ratingSnapshot: 1000,
       }],
+    });
+  });
+
+  it('snapshots the active season rating for fair team selection', async () => {
+    tx.playerRating.findMany.mockResolvedValue([
+      { userId, rating: 1325, season: { active: true } },
+    ]);
+
+    await service.joinQueue(userId, gameId, 'ranked', 'BR');
+
+    expect(tx.matchmakingQueueMember.createMany).toHaveBeenCalledWith({
+      data: [{ queueId: 'queue-entry', userId, role: null, ratingSnapshot: 1325 }],
     });
   });
 
@@ -185,8 +200,13 @@ describe('MatchmakingService queue admission', () => {
 
     expect(tx.matchmakingQueueMember.createMany).toHaveBeenCalledWith({
       data: [
-        { queueId: 'queue-entry', userId, role: 'top' },
-        { queueId: 'queue-entry', userId: '00000000-0000-4000-8000-000000000004', role: 'support' },
+        { queueId: 'queue-entry', userId, role: 'top', ratingSnapshot: 1000 },
+        {
+          queueId: 'queue-entry',
+          userId: '00000000-0000-4000-8000-000000000004',
+          role: 'support',
+          ratingSnapshot: 1000,
+        },
       ],
     });
   });
