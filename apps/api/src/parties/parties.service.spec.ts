@@ -3,6 +3,7 @@ import { BadRequestException, HttpStatus } from '@nestjs/common';
 import { PartiesService } from './parties.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 const mockPrisma = {
   $queryRaw: jest.fn(),
@@ -27,6 +28,12 @@ const mockPrisma = {
   game: { findUnique: jest.fn() },
 };
 const mockRedis = { eval: jest.fn() };
+const mockRealtime = {
+  emitUserUpdate: jest.fn(),
+  emitPartyUpdate: jest.fn(),
+  emitLobbyUpdate: jest.fn(),
+  revokePartySubscription: jest.fn(),
+};
 
 describe('PartiesService', () => {
   let service: PartiesService;
@@ -37,6 +44,7 @@ describe('PartiesService', () => {
         PartiesService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: REDIS_CLIENT, useValue: mockRedis },
+        { provide: RealtimeGateway, useValue: mockRealtime },
       ],
     }).compile();
     service = module.get<PartiesService>(PartiesService);

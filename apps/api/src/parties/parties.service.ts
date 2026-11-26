@@ -13,6 +13,7 @@ import { isUUID } from 'class-validator';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { UpdatePartyRolesDto } from './dto/update-party-roles.dto';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 @Injectable()
 export class PartiesService {
@@ -21,10 +22,11 @@ export class PartiesService {
   constructor(
     private prisma: PrismaService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   async create(userId: string, gameId: string, mode?: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const party = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
       const existing = await tx.partyMember.findFirst({
         where: { userId, party: { status: { in: ['lobby', 'in_queue'] } } },
@@ -47,6 +49,8 @@ export class PartiesService {
       });
       return party;
     });
+    this.notifyPartyChanged(party.id, 'created', userId);
+    return party;
   }
 
   async findById(id: string) {
@@ -94,7 +98,7 @@ export class PartiesService {
     }
     if (code.length < 16 || code.length > 36) throw new NotFoundException('Lobby not found');
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
       const candidate = await tx.party.findFirst({
         where: { inviteCode: code },
@@ -157,6 +161,8 @@ export class PartiesService {
       });
       return { joined: true, partyId: party.id, mode: party.mode };
     });
+    if (result.joined) this.notifyPartyChanged(result.partyId, 'member_joined', userId);
+    return result;
   }
 
   async invite(partyId: string, inviterId: string, targetUserId: string) {
@@ -196,6 +202,7 @@ export class PartiesService {
         metadata: { partyId, inviteId: invite.id, inviteType: 'party' },
       },
     });
+    this.realtime.emitUserUpdate(targetUserId, 'party.invite', { partyId, inviteId: invite.id });
 
     return invite;
   }
@@ -231,6 +238,7 @@ export class PartiesService {
       return { accepted: true, partyId: invite.partyId };
     });
     if ('expired' in result) throw new ForbiddenException('Invite expired');
+    this.notifyPartyChanged(result.partyId, 'invite_accepted', userId);
     return result;
   }
 
@@ -239,11 +247,15 @@ export class PartiesService {
     if (!invite || invite.invitedUserId !== userId) throw new NotFoundException('Invite not found');
 
     await this.prisma.partyInvite.update({ where: { id: inviteId }, data: { status: 'rejected' } });
+    this.realtime.emitUserUpdate(invite.invitedBy, 'party.updated', {
+      partyId: invite.partyId,
+      reason: 'invite_declined',
+    });
     return { declined: true };
   }
 
   async leave(partyId: string, userId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
       await tx.$queryRaw`SELECT "id" FROM "parties" WHERE "id" = ${partyId}::uuid FOR UPDATE`;
       const member = await tx.partyMember.findFirst({ where: { partyId, userId } });
@@ -263,8 +275,10 @@ export class PartiesService {
           data: remaining ? { leaderId: remaining.userId } : { status: 'finished' },
         });
       }
-      return { left: true };
     });
+    this.notifyPartyChanged(partyId, 'member_left', userId);
+    this.realtime.revokePartySubscription(userId, partyId);
+    return { left: true };
   }
 
   async setReady(partyId: string, userId: string, ready: boolean) {
@@ -272,6 +286,7 @@ export class PartiesService {
     if (!member) throw new NotFoundException('Not a member');
 
     await this.prisma.partyMember.update({ where: { id: member.id }, data: { ready } });
+    this.notifyPartyChanged(partyId, 'member_ready', userId);
     return { ready };
   }
 
@@ -280,7 +295,7 @@ export class PartiesService {
       throw new BadRequestException('A role must be provided');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const updatedMember = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
       await tx.$queryRaw`SELECT "id" FROM "parties" WHERE "id" = ${partyId}::uuid FOR UPDATE`;
 
@@ -310,6 +325,8 @@ export class PartiesService {
         data: { role: roles.role },
       });
     });
+    this.notifyPartyChanged(partyId, 'role_updated', userId);
+    return updatedMember;
   }
 
   async toggleOpen(partyId: string, userId: string) {
@@ -318,11 +335,12 @@ export class PartiesService {
     if (party.leaderId !== userId) throw new ForbiddenException('Only leader can change lobby type');
 
     await this.prisma.party.update({ where: { id: partyId }, data: { isOpen: !party.isOpen } });
+    this.notifyPartyChanged(partyId, 'visibility_updated', userId);
     return { isOpen: !party.isOpen };
   }
 
   async regenerateInviteCode(partyId: string, userId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "parties" WHERE "id" = ${partyId}::uuid FOR UPDATE`;
       const party = await tx.party.findUnique({ where: { id: partyId } });
       if (!party) throw new NotFoundException('Party not found');
@@ -338,10 +356,12 @@ export class PartiesService {
         select: { inviteCode: true, inviteCodeExpiresAt: true },
       });
     });
+    this.notifyPartyChanged(partyId, 'invite_code_regenerated', userId);
+    return result;
   }
 
   async revokeInviteCode(partyId: string, userId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "parties" WHERE "id" = ${partyId}::uuid FOR UPDATE`;
       const party = await tx.party.findUnique({ where: { id: partyId } });
       if (!party) throw new NotFoundException('Party not found');
@@ -354,10 +374,12 @@ export class PartiesService {
       });
       return { revoked: true };
     });
+    this.notifyPartyChanged(partyId, 'invite_code_revoked', userId);
+    return result;
   }
 
   async removeMember(partyId: string, leaderId: string, targetUserId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${targetUserId}::uuid FOR UPDATE`;
       await tx.$queryRaw`SELECT "id" FROM "parties" WHERE "id" = ${partyId}::uuid FOR UPDATE`;
       const party = await tx.party.findUnique({ where: { id: partyId } });
@@ -372,6 +394,9 @@ export class PartiesService {
       await tx.partyMember.delete({ where: { id: member.id } });
       return { removed: true };
     });
+    this.notifyPartyChanged(partyId, 'member_removed', targetUserId);
+    this.realtime.revokePartySubscription(targetUserId, partyId);
+    return result;
   }
 
   async listAvailable(gameId?: string) {
@@ -395,5 +420,12 @@ export class PartiesService {
 
   private createInviteCode() {
     return randomBytes(12).toString('base64url');
+  }
+
+  private notifyPartyChanged(partyId: string, reason: string, userId?: string) {
+    const payload = { partyId, reason };
+    this.realtime.emitPartyUpdate(partyId, 'party.updated', payload);
+    if (userId) this.realtime.emitUserUpdate(userId, 'party.updated', payload);
+    this.realtime.emitLobbyUpdate(payload);
   }
 }

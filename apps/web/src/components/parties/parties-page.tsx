@@ -16,6 +16,7 @@ import {
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
+import { useRealtime } from '@/hooks/use-realtime';
 import {
   Check,
   Copy,
@@ -104,6 +105,48 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
   const sideMembers = (myParty?.members ?? []).filter((member) => member.userId !== user?.id);
   sideMembers.slice(0, SIDE_SLOT_ORDER.length).forEach((member, index) => {
     lobbySlots[SIDE_SLOT_ORDER[index]] = member.user;
+  });
+
+  useRealtime(user?.id, myParty?.id, {
+    onPartyUpdated: () => {
+      void partiesApi.mine()
+        .then(setMyParty)
+        .catch((err) => setLobbyError(err instanceof Error ? err.message : 'Não foi possível atualizar o lobby.'));
+    },
+    onQueueUpdated: () => {
+      void matchmakingApi.status()
+        .then(async (entry) => {
+          setQueueEntry(entry);
+          if (!entry) {
+            setMatchAccepted(false);
+            setMatchStarted(false);
+          } else if (entry.matchId) {
+            const match = await matchmakingApi.getMatch(entry.matchId);
+            setMatchAccepted(Boolean(match.players?.some((player: { userId: string; acceptedAt: string | null }) => (
+              player.userId === user?.id && player.acceptedAt
+            ))));
+            setMatchStarted(match.status === 'in_progress');
+          }
+        })
+        .catch((err) => setLobbyError(err instanceof Error ? err.message : 'Não foi possível atualizar a fila.'));
+    },
+    onMatchUpdated: () => {
+      if (!queueEntry?.matchId) return;
+      void matchmakingApi.getMatch(queueEntry.matchId)
+        .then((match) => {
+          setMatchAccepted(Boolean(match.players?.some((player: { userId: string; acceptedAt: string | null }) => (
+            player.userId === user?.id && player.acceptedAt
+          ))));
+          setMatchStarted(match.status === 'in_progress');
+        })
+        .catch((err) => setLobbyError(err instanceof Error ? err.message : 'Não foi possível atualizar a confirmação.'));
+    },
+    onInviteReceived: () => setLobbyError('Você recebeu um convite para uma party. Confira suas notificações.'),
+    onLobbiesUpdated: () => {
+      void partiesApi.listAvailable(selectedGame || undefined)
+        .then(setParties)
+        .catch((err) => setLobbyError(err instanceof Error ? err.message : 'Não foi possível atualizar os lobbies.'));
+    },
   });
 
   const loadParties = async () => {
@@ -216,7 +259,7 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
       } catch (err) {
         setLobbyError(err instanceof Error ? err.message : 'Não foi possível atualizar a fila.');
       }
-    }, 3000);
+    }, 15_000);
     return () => {
       window.clearInterval(timerId);
       window.clearInterval(pollId);

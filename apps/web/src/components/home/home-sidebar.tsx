@@ -5,6 +5,7 @@ import { useAuth } from '@/auth/provider';
 import { friendsApi, communitiesApi, notificationsApi, type Friendship, type Community, type Notification } from '@/lib/api';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { useRealtime } from '@/hooks/use-realtime';
 import Link from 'next/link';
 import { Users, Bell, Server } from 'lucide-react';
 
@@ -13,6 +14,12 @@ export function HomeSidebar() {
   const [friends, setFriends] = useState<Friendship[]>([]);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  useRealtime(user?.id, null, {
+    onInviteReceived: () => {
+      void notificationsApi.list(true).then(setNotifications);
+    },
+  });
 
   useEffect(() => {
     if (!user) return;

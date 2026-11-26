@@ -6,6 +6,7 @@ import { matchmakingApi, gamesApi, type Game } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useRealtime } from '@/hooks/use-realtime';
 import { Loader2, Play, X } from 'lucide-react';
 
 export default function MatchmakingPage() {
@@ -25,6 +26,38 @@ export default function MatchmakingPage() {
   const [error, setError] = useState<string | null>(null);
   const selectedGameConfig = games.find((game) => game.id === selectedGame);
   const requiredRoles = selectedGameConfig?.roles ?? [];
+
+  useRealtime(user?.id, null, {
+    onQueueUpdated: () => {
+      void matchmakingApi.status()
+        .then(async (status) => {
+          setQueueEntry(status);
+          setInQueue(Boolean(status));
+          if (status?.matchId) {
+            const match = await matchmakingApi.getMatch(status.matchId);
+            setMatchAccepted(Boolean(match.players?.some((player: { userId: string; acceptedAt: string | null }) => (
+              player.userId === user?.id && player.acceptedAt
+            ))));
+            setMatchStarted(match.status === 'in_progress');
+          } else {
+            setMatchAccepted(false);
+            setMatchStarted(false);
+          }
+        })
+        .catch(() => setError('Não foi possível atualizar o estado da fila.'));
+    },
+    onMatchUpdated: () => {
+      if (!queueEntry?.matchId) return;
+      void matchmakingApi.getMatch(queueEntry.matchId)
+        .then((match) => {
+          setMatchAccepted(Boolean(match.players?.some((player: { userId: string; acceptedAt: string | null }) => (
+            player.userId === user?.id && player.acceptedAt
+          ))));
+          setMatchStarted(match.status === 'in_progress');
+        })
+        .catch(() => setError('Não foi possível atualizar a confirmação da partida.'));
+    },
+  });
 
   useEffect(() => {
     gamesApi.list().then((g) => {
@@ -51,7 +84,7 @@ export default function MatchmakingPage() {
       } catch {
         setError('Não foi possível atualizar o estado da fila.');
       }
-    }, 3000);
+    }, 15_000);
     return () => clearInterval(interval);
   }, [inQueue, user?.id]);
 

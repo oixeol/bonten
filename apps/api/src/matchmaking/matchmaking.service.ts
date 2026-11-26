@@ -7,11 +7,15 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { findMatchGroups, QueueMatchMember } from './matchmaker';
 
 @Injectable()
 export class MatchmakingService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   async joinQueue(
     userId: string,
@@ -128,6 +132,19 @@ export class MatchmakingService {
       return matchedEntry;
     });
 
+    this.realtime.emitUserUpdate(userId, 'queue.updated', {
+      queueId: entry.id,
+      status: entry.status,
+      matchId: entry.matchId,
+    });
+    if (entry.partyId) {
+      this.realtime.emitPartyUpdate(entry.partyId, 'queue.updated', {
+        queueId: entry.id,
+        status: entry.status,
+        matchId: entry.matchId,
+      });
+    }
+    if (entry.matchId) await this.notifyMatchParticipants(entry.matchId);
     return entry;
   }
 
@@ -220,7 +237,7 @@ export class MatchmakingService {
   }
 
   async leaveQueue(userId: string) {
-    await this.prisma.$transaction(async (tx) => {
+    const partyId = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
       const partyMember = await tx.partyMember.findFirst({
         where: { userId, party: { status: 'in_queue' } },
@@ -245,8 +262,14 @@ export class MatchmakingService {
           data: { status: 'lobby' },
         });
       }
+      return partyMember?.partyId ?? null;
     });
 
+    this.realtime.emitUserUpdate(userId, 'queue.updated', { status: 'cancelled' });
+    if (partyId) {
+      this.realtime.emitPartyUpdate(partyId, 'queue.updated', { status: 'cancelled' });
+      this.realtime.emitPartyUpdate(partyId, 'party.updated', { reason: 'queue_cancelled' });
+    }
     return { left: true };
   }
 
@@ -264,7 +287,7 @@ export class MatchmakingService {
   }
 
   async acceptMatch(matchId: string, userId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "matches" WHERE "id" = ${matchId}::uuid FOR UPDATE`;
       const match = await tx.match.findUnique({ where: { id: matchId } });
       if (!match) throw new NotFoundException('Match not found');
@@ -290,10 +313,12 @@ export class MatchmakingService {
 
       return { accepted: true, matchStarted };
     });
+    await this.notifyMatchParticipants(matchId);
+    return result;
   }
 
   async declineMatch(matchId: string, userId: string) {
-    await this.prisma.$transaction(async (tx) => {
+    const partyIds = await this.prisma.$transaction(async (tx) => {
       const match = await tx.match.findFirst({
         where: { id: matchId, players: { some: { userId } } },
         select: { id: true, status: true },
@@ -322,8 +347,14 @@ export class MatchmakingService {
           data: { status: 'lobby' },
         });
       }
+      return partyIds;
     });
 
+    for (const partyId of partyIds) {
+      this.realtime.emitPartyUpdate(partyId, 'party.updated', { reason: 'match_declined' });
+      this.realtime.emitPartyUpdate(partyId, 'queue.updated', { status: 'cancelled' });
+    }
+    await this.notifyMatchParticipants(matchId, 'cancelled');
     return { declined: true };
   }
 
@@ -334,5 +365,16 @@ export class MatchmakingService {
     });
     if (!match) throw new NotFoundException('Match not found');
     return match;
+  }
+
+  private async notifyMatchParticipants(matchId: string, status?: string) {
+    const players = await this.prisma.matchPlayer.findMany({
+      where: { matchId },
+      select: { userId: true },
+    });
+    for (const { userId } of players) {
+      this.realtime.emitUserUpdate(userId, 'match.updated', { matchId, status });
+      this.realtime.emitUserUpdate(userId, 'queue.updated', { matchId, status: status ?? 'matched' });
+    }
   }
 }

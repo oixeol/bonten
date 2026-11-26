@@ -24,13 +24,19 @@ const tx = {
   },
   matchmakingQueueMember: { createMany: jest.fn() },
   match: { findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), updateMany: jest.fn(), update: jest.fn() },
-  matchPlayer: { findFirst: jest.fn(), count: jest.fn(), createMany: jest.fn(), updateMany: jest.fn() },
+  matchPlayer: { findFirst: jest.fn(), findMany: jest.fn(), count: jest.fn(), createMany: jest.fn(), updateMany: jest.fn() },
   matchResult: { create: jest.fn() },
 };
 
 const prisma = {
   $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
   match: { findFirst: jest.fn() },
+  matchPlayer: { findMany: jest.fn() },
+};
+const realtime = {
+  emitUserUpdate: jest.fn(),
+  emitPartyUpdate: jest.fn(),
+  emitLobbyUpdate: jest.fn(),
 };
 
 describe('MatchmakingService queue admission', () => {
@@ -38,7 +44,7 @@ describe('MatchmakingService queue admission', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new MatchmakingService(prisma as never);
+    service = new MatchmakingService(prisma as never, realtime as never);
     tx.$queryRaw.mockResolvedValue([]);
     tx.game.findUnique.mockResolvedValue({
       partySizesAllowed: [1, 2, 3, 5],
@@ -67,8 +73,10 @@ describe('MatchmakingService queue admission', () => {
     tx.matchPlayer.count.mockResolvedValue(0);
     tx.matchPlayer.createMany.mockResolvedValue({ count: 0 });
     tx.matchPlayer.updateMany.mockResolvedValue({ count: 1 });
+    tx.matchPlayer.findMany.mockResolvedValue([]);
     tx.matchResult.create.mockResolvedValue({ matchId: 'match-id' });
     prisma.match.findFirst.mockResolvedValue(null);
+    prisma.matchPlayer.findMany.mockResolvedValue([]);
   });
 
   it.each([1, 2, 3, 5])('accepts a configured party size of %i', async (size) => {
@@ -89,6 +97,16 @@ describe('MatchmakingService queue admission', () => {
         status: 'waiting',
       },
     });
+  });
+
+  it('notifies the queued player immediately after queue admission', async () => {
+    await service.joinQueue(userId, gameId, 'competitive', 'BR');
+
+    expect(realtime.emitUserUpdate).toHaveBeenCalledWith(
+      userId,
+      'queue.updated',
+      expect.objectContaining({ queueId: 'queue-entry', status: 'waiting' }),
+    );
   });
 
   it('rejects a four-player party before creating a queue entry', async () => {
