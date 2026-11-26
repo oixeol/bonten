@@ -93,6 +93,29 @@ describe('matchmaker', () => {
     expect(Math.abs((ratingByTeam?.A ?? 0) - (ratingByTeam?.B ?? 0))).toBe(0);
   });
 
+  it('balances individual skill distributions when team rating totals tie', () => {
+    const ratings = [1, 2, 3, 4, 5, 6, 7, 8];
+    const groups = ratings.map((rating, index) => ({
+      id: `player-${index}`,
+      members: [{ userId: `user-${index}`, role: null, rating }],
+    }));
+
+    const result = findMatchGroups(groups, 8, true, 4);
+    const ratingsByTeam = {
+      A: result?.filter(({ team }) => team === 'A').flatMap(({ group: selected }) =>
+        selected.members.map((member) => member.rating ?? 1000)).sort((left, right) => left - right) ?? [],
+      B: result?.filter(({ team }) => team === 'B').flatMap(({ group: selected }) =>
+        selected.members.map((member) => member.rating ?? 1000)).sort((left, right) => left - right) ?? [],
+    };
+
+    expect(ratingsByTeam.A.reduce((total, rating) => total + rating, 0))
+      .toBe(ratingsByTeam.B.reduce((total, rating) => total + rating, 0));
+    expect(ratingsByTeam.A.reduce(
+      (total, rating, index) => total + Math.abs(rating - ratingsByTeam.B[index]),
+      0,
+    )).toBe(4);
+  });
+
   it('widens its allowed rating window as the anchor group waits', () => {
     const groups = [
       { id: 'oldest', members: [{ userId: 'old', role: null, rating: 1000 }] },

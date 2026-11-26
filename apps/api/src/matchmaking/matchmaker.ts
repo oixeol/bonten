@@ -158,6 +158,9 @@ function balanceTeams(
   const roleIndexes = new Map(requiredRoles.map((role, index) => [role, index]));
   const allRolesMask = (1 << requiredRoles.length) - 1;
   let bestDifference = Number.POSITIVE_INFINITY;
+  let bestDistributionDifference = Number.POSITIVE_INFINITY;
+  let bestPremadePlayerDifference = Number.POSITIVE_INFINITY;
+  let bestPremadeGroupDifference = Number.POSITIVE_INFINITY;
   let bestChanges = Number.POSITIVE_INFINITY;
   let bestAssignments: QueueMatchAssignment[] | null = null;
 
@@ -181,8 +184,48 @@ function balanceTeams(
       ) return;
 
       const difference = Math.abs(ratingA - ratingB);
-      if (difference < bestDifference || (difference === bestDifference && changes < bestChanges)) {
+      const teamARatings: number[] = [];
+      const teamBRatings: number[] = [];
+      let premadePlayersA = 0;
+      let premadePlayersB = 0;
+      let premadeGroupsA = 0;
+      let premadeGroupsB = 0;
+      for (const assignment of selected) {
+        const teamRatings = assignment.team === 'A' ? teamARatings : teamBRatings;
+        teamRatings.push(...assignment.group.members.map((member) => member.rating ?? 1000));
+        if (assignment.group.members.length > 1) {
+          if (assignment.team === 'A') {
+            premadePlayersA += assignment.group.members.length;
+            premadeGroupsA += 1;
+          } else {
+            premadePlayersB += assignment.group.members.length;
+            premadeGroupsB += 1;
+          }
+        }
+      }
+      teamARatings.sort((left, right) => left - right);
+      teamBRatings.sort((left, right) => left - right);
+      const distributionDifference = teamARatings.reduce(
+        (total, rating, playerIndex) => total + Math.abs(rating - teamBRatings[playerIndex]),
+        0,
+      );
+      const premadePlayerDifference = Math.abs(premadePlayersA - premadePlayersB);
+      const premadeGroupDifference = Math.abs(premadeGroupsA - premadeGroupsB);
+      const isBetter = difference < bestDifference
+        || (difference === bestDifference && distributionDifference < bestDistributionDifference)
+        || (difference === bestDifference && distributionDifference === bestDistributionDifference
+          && premadePlayerDifference < bestPremadePlayerDifference)
+        || (difference === bestDifference && distributionDifference === bestDistributionDifference
+          && premadePlayerDifference === bestPremadePlayerDifference
+          && premadeGroupDifference < bestPremadeGroupDifference)
+        || (difference === bestDifference && distributionDifference === bestDistributionDifference
+          && premadePlayerDifference === bestPremadePlayerDifference
+          && premadeGroupDifference === bestPremadeGroupDifference && changes < bestChanges);
+      if (isBetter) {
         bestDifference = difference;
+        bestDistributionDifference = distributionDifference;
+        bestPremadePlayerDifference = premadePlayerDifference;
+        bestPremadeGroupDifference = premadeGroupDifference;
         bestChanges = changes;
         bestAssignments = [...selected];
       }
