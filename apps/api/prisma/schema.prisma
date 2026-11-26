@@ -136,6 +136,8 @@ model User {
   matchParticipations   MatchPlayer[] @relation("MatchParticipations")
   playerProfiles        PlayerProfile[]
   playerRatings         PlayerRating[]
+  lfgListings           LfgListing[] @relation("LfgListingCreator")
+  lfgApplications       LfgApplication[] @relation("LfgApplicationApplicant")
 
   @@index([status])
   @@map("users")
@@ -368,6 +370,7 @@ model Game {
   seasons         Season[]
   parties         Party[]
   queues          MatchmakingQueue[]
+  lfgListings     LfgListing[]
   teamRatings     TeamRating[]
   teamRosters     TeamRoster[]
 
@@ -579,6 +582,7 @@ model Party {
   members  PartyMember[]
   invites  PartyInvite[]
   queueEntries MatchmakingQueue[]
+  lfgListing LfgListing?
 
   @@index([gameId, status])
   @@index([leaderId])
@@ -616,6 +620,51 @@ model PartyInvite {
   @@index([invitedUserId, status])
   @@index([partyId, status])
   @@map("party_invites")
+}
+
+model LfgListing {
+  id            String   @id @default(uuid()) @db.Uuid
+  creatorId     String   @db.Uuid
+  creator       User     @relation("LfgListingCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  partyId       String   @unique @db.Uuid
+  party         Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  gameId        String   @db.Uuid
+  game          Game     @relation(fields: [gameId], references: [id])
+  mode          String   @db.VarChar(32)
+  region        String   @db.VarChar(16)
+  targetSize    Int
+  desiredRole   String?  @db.VarChar(32)
+  minimumRating Int?
+  maximumRating Int?
+  message       String?  @db.VarChar(240)
+  status        String   @default("active")
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  applications LfgApplication[]
+
+  @@index([gameId, mode, region, status, expiresAt])
+  @@index([creatorId, status])
+  @@map("lfg_listings")
+}
+
+model LfgApplication {
+  id          String     @id @default(uuid()) @db.Uuid
+  listingId   String     @db.Uuid
+  listing     LfgListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  applicantId String     @db.Uuid
+  applicant   User       @relation("LfgApplicationApplicant", fields: [applicantId], references: [id], onDelete: Cascade)
+  role        String?    @db.VarChar(32)
+  message     String?    @db.VarChar(240)
+  status      String     @default("pending")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([listingId, applicantId])
+  @@index([listingId, status])
+  @@index([applicantId, status])
+  @@map("lfg_applications")
 }
 
 model MatchmakingQueue {

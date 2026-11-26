@@ -78,6 +78,16 @@ export default function JogarPage() {
         </Link>
       </div>
 
+      <Card className="mx-auto mt-5 flex max-w-xl items-center justify-between gap-4 p-5">
+        <div>
+          <h2 className="font-semibold text-fg">Quer encontrar pessoas para jogar junto?</h2>
+          <p className="mt-1 text-sm text-fg-muted">Use o LFG para descobrir grupos sem iniciar uma partida competitiva.</p>
+        </div>
+        <Link href="/lfg" className="shrink-0 rounded-md bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90">
+          Encontrar grupo
+        </Link>
+      </Card>
+
       <Card className="mx-auto mt-8 max-w-xl p-5">
         <form onSubmit={handleJoinByCode} className="space-y-3">
           <div>

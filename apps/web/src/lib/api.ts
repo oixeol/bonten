@@ -543,6 +543,73 @@ export const partiesApi = {
   removeMember: (partyId: string, userId: string) => apiFetch<{ removed: boolean }>(`/parties/${partyId}/members/${userId}`, { method: 'DELETE' }),
 };
 
+export interface LfgListing {
+  id: string;
+  creatorId: string;
+  partyId: string;
+  gameId: string;
+  mode: string;
+  region: string;
+  targetSize: number;
+  desiredRole: string | null;
+  minimumRating: number | null;
+  maximumRating: number | null;
+  message: string | null;
+  status: string;
+  expiresAt: string;
+  creator: { id: string; username: string; displayName: string; avatarUrl: string | null };
+  game: { id: string; slug: string; name: string; roles: string[] };
+  party: {
+    id: string;
+    status: string;
+    members: Array<{
+      id: string;
+      userId: string;
+      role: string | null;
+      user: { id: string; username: string; displayName: string; avatarUrl: string | null };
+    }>;
+  };
+  applications: Array<{
+    id: string;
+    applicantId?: string;
+    status: string;
+    role: string | null;
+    message: string | null;
+    applicant?: { id: string; username: string; displayName: string; avatarUrl: string | null };
+  }>;
+}
+
+export const lfgApi = {
+  list: (filters: { gameId?: string; mode?: string; region?: string } = {}) => {
+    const query = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) query.set(key, value);
+    });
+    const suffix = query.toString();
+    return apiFetch<LfgListing[]>(`/lfg${suffix ? `?${suffix}` : ''}`);
+  },
+  mine: () => apiFetch<LfgListing[]>('/lfg/mine'),
+  create: (data: {
+    gameId: string;
+    mode: string;
+    region: string;
+    targetSize: number;
+    desiredRole?: string;
+    minimumRating?: number;
+    maximumRating?: number;
+    message?: string;
+    partyId?: string;
+  }) => apiFetch<Pick<LfgListing, 'id' | 'partyId' | 'status' | 'expiresAt'>>('/lfg', { method: 'POST', body: data }),
+  apply: (listingId: string, data: { role?: string; message?: string } = {}) =>
+    apiFetch<{ id: string; status: string }>(`/lfg/${listingId}/apply`, { method: 'POST', body: data }),
+  accept: (listingId: string, applicationId: string) =>
+    apiFetch<{ accepted: boolean; partyId: string }>(`/lfg/${listingId}/applications/${applicationId}/accept`, { method: 'POST' }),
+  reject: (listingId: string, applicationId: string) =>
+    apiFetch<{ rejected: boolean }>(`/lfg/${listingId}/applications/${applicationId}/reject`, { method: 'POST' }),
+  cancel: (listingId: string) =>
+    apiFetch<{ cancelled: boolean }>(`/lfg/${listingId}`, { method: 'DELETE' }),
+};
+
 export interface Game {
   id: string;
   slug: string;
