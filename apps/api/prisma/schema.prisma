@@ -353,6 +353,7 @@ model Game {
   teamSize        Int
   playersPerMatch Int
   partySizesAllowed Int[]
+  roles           String[] @default([])
   hasMaps         Boolean  @default(false)
   hasTeams        Boolean  @default(true)
   ratingModel     String   @default("elo")
@@ -569,6 +570,8 @@ model Party {
   mode           String?
   isOpen         Boolean  @default(false)
   status         String   @default("lobby")
+  inviteCode     String?  @unique
+  inviteCodeExpiresAt DateTime?
   voiceChannelId String?  @db.Uuid
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -579,6 +582,7 @@ model Party {
 
   @@index([gameId, status])
   @@index([leaderId])
+  @@index([inviteCodeExpiresAt])
   @@map("parties")
 }
 
@@ -588,8 +592,7 @@ model PartyMember {
   party    Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
   userId   String   @db.Uuid
   user     User     @relation("PartyMemberships", fields: [userId], references: [id], onDelete: Cascade)
-  primaryRole   String?
-  secondaryRole String?
+  role     String?
   ready    Boolean  @default(false)
   joinedAt DateTime @default(now())
 
@@ -642,8 +645,7 @@ model MatchmakingQueueMember {
   queue         MatchmakingQueue  @relation(fields: [queueId], references: [id], onDelete: Cascade)
   userId        String            @db.Uuid
   user          User              @relation("MatchmakingQueueMemberUser", fields: [userId], references: [id], onDelete: Cascade)
-  primaryRole   String?
-  secondaryRole String?
+  role          String?
   createdAt     DateTime          @default(now())
 
   @@unique([queueId, userId])

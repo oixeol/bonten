@@ -46,6 +46,7 @@ describe('MatchmakingService queue admission', () => {
       playersPerMatch: 10,
       teamSize: 5,
       hasTeams: true,
+      roles: [],
     });
     tx.partyMember.findFirst.mockResolvedValue(null);
     tx.partyMember.findMany.mockResolvedValue([]);
@@ -97,6 +98,7 @@ describe('MatchmakingService queue admission', () => {
       playersPerMatch: 10,
       teamSize: 5,
       hasTeams: true,
+      roles: [],
     });
     tx.partyMember.findFirst.mockResolvedValue({ partyId, party: { status: 'lobby' } });
     tx.partyMember.count.mockResolvedValue(4);
@@ -115,6 +117,7 @@ describe('MatchmakingService queue admission', () => {
       playersPerMatch: 8,
       teamSize: 1,
       hasTeams: false,
+      roles: [],
     });
     tx.partyMember.findFirst.mockResolvedValue({ partyId, party: { status: 'lobby' } });
     tx.partyMember.count.mockResolvedValue(3);
@@ -124,15 +127,22 @@ describe('MatchmakingService queue admission', () => {
     expect(tx.matchmakingQueue.create).not.toHaveBeenCalled();
   });
 
-  it('snapshots per-player role preferences for solo queue entries', async () => {
-    await service.joinQueue(userId, gameId, 'ranked', 'BR', 'mid', 'support');
+  it('requires and snapshots one configured role for solo queue entries', async () => {
+    tx.game.findUnique.mockResolvedValue({
+      partySizesAllowed: [1, 2, 3, 5],
+      slug: 'lol',
+      playersPerMatch: 10,
+      teamSize: 5,
+      hasTeams: true,
+      roles: ['top', 'jungle', 'mid', 'adc', 'support'],
+    });
+    await service.joinQueue(userId, gameId, 'ranked', 'BR', 'mid');
 
     expect(tx.matchmakingQueueMember.createMany).toHaveBeenCalledWith({
       data: [{
         queueId: 'queue-entry',
         userId,
-        primaryRole: 'mid',
-        secondaryRole: 'support',
+        role: 'mid',
       }],
     });
   });
@@ -141,21 +151,24 @@ describe('MatchmakingService queue admission', () => {
     tx.partyMember.findFirst.mockResolvedValue({ partyId, party: { status: 'lobby' } });
     tx.partyMember.count.mockResolvedValue(2);
     tx.partyMember.findMany.mockResolvedValue([
-      { userId, primaryRole: 'top', secondaryRole: 'mid' },
-      { userId: '00000000-0000-4000-8000-000000000004', primaryRole: 'support', secondaryRole: null },
+      { userId, role: 'top' },
+      { userId: '00000000-0000-4000-8000-000000000004', role: 'support' },
     ]);
+    tx.game.findUnique.mockResolvedValue({
+      partySizesAllowed: [1, 2, 3, 5],
+      slug: 'lol',
+      playersPerMatch: 10,
+      teamSize: 5,
+      hasTeams: true,
+      roles: ['top', 'jungle', 'mid', 'adc', 'support'],
+    });
 
     await service.joinQueue(userId, gameId, 'ranked', 'BR');
 
     expect(tx.matchmakingQueueMember.createMany).toHaveBeenCalledWith({
       data: [
-        { queueId: 'queue-entry', userId, primaryRole: 'top', secondaryRole: 'mid' },
-        {
-          queueId: 'queue-entry',
-          userId: '00000000-0000-4000-8000-000000000004',
-          primaryRole: 'support',
-          secondaryRole: null,
-        },
+        { queueId: 'queue-entry', userId, role: 'top' },
+        { queueId: 'queue-entry', userId: '00000000-0000-4000-8000-000000000004', role: 'support' },
       ],
     });
   });
@@ -164,38 +177,34 @@ describe('MatchmakingService queue admission', () => {
     const queuedGroups = [
       {
         id: 'queue-entry',
-        members: [{ userId, primaryRole: null, secondaryRole: null }],
+        members: [{ userId, role: null }],
       },
       {
         id: 'duo-one',
         members: ['a', 'b'].map((suffix) => ({
           userId: `duo-one-${suffix}`,
-          primaryRole: null,
-          secondaryRole: null,
+          role: null,
         })),
       },
       {
         id: 'duo-two',
         members: ['a', 'b'].map((suffix) => ({
           userId: `duo-two-${suffix}`,
-          primaryRole: null,
-          secondaryRole: null,
+          role: null,
         })),
       },
       {
         id: 'trio-one',
         members: ['a', 'b', 'c'].map((suffix) => ({
           userId: `trio-one-${suffix}`,
-          primaryRole: null,
-          secondaryRole: null,
+          role: null,
         })),
       },
       {
         id: 'duo-three',
         members: ['a', 'b'].map((suffix) => ({
           userId: `duo-three-${suffix}`,
-          primaryRole: null,
-          secondaryRole: null,
+          role: null,
         })),
       },
     ];
@@ -228,8 +237,7 @@ describe('MatchmakingService queue admission', () => {
       id: index === 0 ? 'queue-entry' : `queue-${index}`,
       members: [{
         userId: index === 0 ? userId : `user-${index}`,
-        primaryRole: null,
-        secondaryRole: null,
+        role: null,
       }],
     }));
     tx.game.findUnique.mockResolvedValue({
@@ -238,6 +246,7 @@ describe('MatchmakingService queue admission', () => {
       playersPerMatch: 8,
       teamSize: 1,
       hasTeams: false,
+      roles: [],
     });
     tx.$queryRaw
       .mockResolvedValueOnce([])

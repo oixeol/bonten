@@ -469,6 +469,8 @@ export interface Party {
   mode: string | null;
   isOpen: boolean;
   status: string;
+  inviteCode?: string | null;
+  inviteCodeExpiresAt?: string | null;
   members?: PartyMember[];
   invites?: PartyInvite[];
   createdAt: string;
@@ -493,8 +495,7 @@ export interface PartyMember {
   partyId: string;
   userId: string;
   user: { id: string; username: string; displayName: string; avatarUrl: string | null; status: string };
-  primaryRole: string | null;
-  secondaryRole: string | null;
+  role: string | null;
   ready: boolean;
   joinedAt: string;
 }
@@ -512,8 +513,8 @@ export interface PartyInvite {
 }
 
 export const matchmakingApi = {
-  joinQueue: (gameId: string, mode: string, region: string, roles?: { primaryRole?: string | null; secondaryRole?: string | null }) =>
-    apiFetch<MatchmakingQueueEntry>('/matchmaking/queue', { method: 'POST', body: { gameId, mode, region, ...roles } }),
+  joinQueue: (gameId: string, mode: string, region: string, role?: string | null) =>
+    apiFetch<MatchmakingQueueEntry>('/matchmaking/queue', { method: 'POST', body: { gameId, mode, region, role } }),
   leaveQueue: () => apiFetch<{ left: boolean }>('/matchmaking/queue', { method: 'DELETE' }),
   status: () => apiFetch<MatchmakingQueueEntry | null>('/matchmaking/queue/status'),
   getMatch: (id: string) => apiFetch<any>(`/matchmaking/match/${id}`),
@@ -525,6 +526,10 @@ export const partiesApi = {
   create: (gameId: string, mode?: string) => apiFetch<Party>('/parties', { method: 'POST', body: { gameId, mode } }),
   mine: () => apiFetch<Party | null>('/parties/mine'),
   joinByCode: (code: string) => apiFetch<{ joined: boolean; partyId: string; mode: string | null }>('/parties/join-by-code', { method: 'POST', body: { code } }),
+  regenerateInviteCode: (partyId: string) =>
+    apiFetch<{ inviteCode: string; inviteCodeExpiresAt: string }>(`/parties/${partyId}/invite-code/regenerate`, { method: 'POST' }),
+  revokeInviteCode: (partyId: string) =>
+    apiFetch<{ revoked: boolean }>(`/parties/${partyId}/invite-code`, { method: 'DELETE' }),
   listAvailable: (gameId?: string) => apiFetch<Party[]>(`/parties${gameId ? `?gameId=${gameId}` : ''}`),
   findById: (id: string) => apiFetch<Party>(`/parties/${id}`),
   invite: (partyId: string, userId: string) => apiFetch<any>(`/parties/${partyId}/invite`, { method: 'POST', body: { userId } }),
@@ -532,8 +537,8 @@ export const partiesApi = {
   declineInvite: (inviteId: string) => apiFetch<{ declined: boolean }>(`/parties/invites/${inviteId}/decline`, { method: 'POST' }),
   leave: (partyId: string) => apiFetch<{ left: boolean }>(`/parties/${partyId}/leave`, { method: 'DELETE' }),
   setReady: (partyId: string, ready: boolean) => apiFetch<{ ready: boolean }>(`/parties/${partyId}/ready`, { method: 'PUT', body: { ready } }),
-  updateRoles: (partyId: string, roles: { primaryRole?: string | null; secondaryRole?: string | null }) =>
-    apiFetch<PartyMember>(`/parties/${partyId}/roles`, { method: 'PUT', body: roles }),
+  updateRole: (partyId: string, gameId: string, role: string | null) =>
+    apiFetch<PartyMember>(`/parties/${partyId}/roles`, { method: 'PUT', body: { gameId, role } }),
   toggleOpen: (partyId: string) => apiFetch<{ isOpen: boolean }>(`/parties/${partyId}/open`, { method: 'PUT' }),
   removeMember: (partyId: string, userId: string) => apiFetch<{ removed: boolean }>(`/parties/${partyId}/members/${userId}`, { method: 'DELETE' }),
 };
@@ -546,6 +551,7 @@ export interface Game {
   teamSize: number;
   playersPerMatch?: number;
   partySizesAllowed: number[];
+  roles?: string[];
   hasMaps: boolean;
   hasTeams: boolean;
   ratingModel: string;

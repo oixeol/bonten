@@ -4,6 +4,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { PartiesService } from './parties.service';
 import { ParseUUIDPipe } from '@nestjs/common';
 import { UpdatePartyRolesDto } from './dto/update-party-roles.dto';
+import { JoinPartyByCodeDto } from './dto/join-party-by-code.dto';
 
 @Controller('parties')
 @UseGuards(AuthGuard)
@@ -26,8 +27,18 @@ export class PartiesController {
   }
 
   @Post('join-by-code')
-  async joinByCode(@CurrentUser() user: { id: string }, @Body() body: { code: string }) {
+  async joinByCode(@CurrentUser() user: { id: string }, @Body() body: JoinPartyByCodeDto) {
     return this.parties.joinByCode(user.id, body.code);
+  }
+
+  @Post(':id/invite-code/regenerate')
+  async regenerateInviteCode(@CurrentUser() user: { id: string }, @Param('id', ParseUUIDPipe) id: string) {
+    return this.parties.regenerateInviteCode(id, user.id);
+  }
+
+  @Delete(':id/invite-code')
+  async revokeInviteCode(@CurrentUser() user: { id: string }, @Param('id', ParseUUIDPipe) id: string) {
+    return this.parties.revokeInviteCode(id, user.id);
   }
 
   @Get(':id')

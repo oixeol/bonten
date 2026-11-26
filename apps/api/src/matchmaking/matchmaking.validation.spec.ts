@@ -12,7 +12,7 @@ describe('Matchmaking request validation', () => {
   });
 
   it('accepts valid role preferences', async () => {
-    const body = { gameId, mode: 'competitive', region: 'BR', primaryRole: 'mid', secondaryRole: 'support' };
+    const body = { gameId, mode: 'competitive', region: 'BR', role: 'mid' };
     await expect(pipe.transform(body, { type: 'body', metatype: JoinQueueDto }))
       .resolves.toBeInstanceOf(JoinQueueDto);
   });
@@ -22,7 +22,7 @@ describe('Matchmaking request validation', () => {
     { gameId, mode: '', region: 'BR' },
     { gameId, mode: 'competitive', region: 'B' },
     { gameId, mode: 'competitive', region: 'BR', partyId: gameId },
-    { gameId, mode: 'competitive', region: 'BR', primaryRole: 'tank' },
+    { gameId, mode: 'competitive', region: 'BR', role: 'x'.repeat(33) },
   ])('rejects invalid queue request %j', async (body) => {
     await expect(pipe.transform(body, { type: 'body', metatype: JoinQueueDto }))
       .rejects.toBeInstanceOf(BadRequestException);

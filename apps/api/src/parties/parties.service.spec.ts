@@ -16,6 +16,7 @@ const mockPrisma = {
   },
   party: {
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
   },
@@ -23,6 +24,7 @@ const mockPrisma = {
     findUnique: jest.fn(),
     update: jest.fn(),
   },
+  game: { findUnique: jest.fn() },
 };
 const mockRedis = { eval: jest.fn() };
 
@@ -62,14 +64,39 @@ describe('PartiesService', () => {
     });
   });
 
-  it('lets a user join a closed lobby using its group code', async () => {
+  it('does not expose invite codes through public party lookup', async () => {
+    mockPrisma.party.findUnique.mockResolvedValue({
+      id: '00000000-0000-4000-8000-000000000001',
+      inviteCode: 'abcdefghijklmnop',
+      inviteCodeExpiresAt: new Date(),
+      members: [],
+      game: {},
+      invites: [],
+    });
+
+    const party = await service.findById('00000000-0000-4000-8000-000000000001');
+    expect(party).not.toHaveProperty('inviteCode');
+    expect(party).not.toHaveProperty('inviteCodeExpiresAt');
+  });
+
+  it('lets a user join a closed lobby using its active group code', async () => {
     const partyId = '00000000-0000-4000-8000-000000000001';
-    const party = { id: partyId, status: 'lobby', isOpen: false, mode: 'competitive', members: [] };
+    const code = 'abcdefghijklmnop';
+    const party = {
+      id: partyId,
+      status: 'lobby',
+      isOpen: false,
+      mode: 'competitive',
+      inviteCode: code,
+      inviteCodeExpiresAt: new Date(Date.now() + 60_000),
+      members: [],
+    };
+    mockPrisma.party.findFirst.mockResolvedValue({ id: partyId });
     mockPrisma.party.findUnique.mockResolvedValue(party);
     mockPrisma.partyMember.findFirst.mockResolvedValue(null);
     mockPrisma.partyMember.create.mockResolvedValue({ partyId, userId: 'user-id' });
 
-    await expect(service.joinByCode('user-id', partyId)).resolves.toEqual({
+    await expect(service.joinByCode('user-id', code)).resolves.toEqual({
       joined: true,
       partyId,
       mode: 'competitive',
@@ -78,6 +105,22 @@ describe('PartiesService', () => {
       data: { partyId, userId: 'user-id', ready: false },
     });
     expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects expired or rotated lobby codes', async () => {
+    const partyId = '00000000-0000-4000-8000-000000000001';
+    mockPrisma.party.findFirst.mockResolvedValue({ id: partyId });
+    mockPrisma.party.findUnique.mockResolvedValue({
+      id: partyId,
+      status: 'lobby',
+      inviteCode: 'a-different-code',
+      inviteCodeExpiresAt: new Date(Date.now() + 60_000),
+      members: [],
+    });
+
+    await expect(service.joinByCode('user-id', 'abcdefghijklmnop'))
+      .rejects.toMatchObject({ status: 404 });
+    expect(mockPrisma.partyMember.create).not.toHaveBeenCalled();
   });
 
   it('rate limits lobby code attempts per user', async () => {
@@ -99,30 +142,30 @@ describe('PartiesService', () => {
       id: 'member-id',
       partyId: 'party-id',
       userId: 'user-id',
-      primaryRole: 'top',
-      secondaryRole: null,
+      role: 'top',
     };
     mockPrisma.party.findUnique.mockResolvedValue({ id: 'party-id', status: 'lobby' });
-    mockPrisma.partyMember.findFirst.mockResolvedValue(member);
-    mockPrisma.partyMember.update.mockResolvedValue({ ...member, secondaryRole: 'support' });
+    mockPrisma.partyMember.findFirst.mockResolvedValueOnce(member).mockResolvedValueOnce(null);
+    mockPrisma.game.findUnique.mockResolvedValue({ roles: ['top', 'jungle', 'mid', 'adc', 'support'] });
+    mockPrisma.partyMember.update.mockResolvedValue({ ...member, role: 'support' });
 
-    await expect(service.updateMemberRoles('party-id', 'user-id', { secondaryRole: 'support' }))
-      .resolves.toMatchObject({ primaryRole: 'top', secondaryRole: 'support' });
+    await expect(service.updateMemberRoles('party-id', 'user-id', { gameId: 'game-id', role: 'support' }))
+      .resolves.toMatchObject({ role: 'support' });
     expect(mockPrisma.partyMember.update).toHaveBeenCalledWith({
       where: { id: 'member-id' },
-      data: { primaryRole: 'top', secondaryRole: 'support' },
+      data: { role: 'support' },
     });
   });
 
-  it('rejects duplicate primary and secondary role preferences', async () => {
+  it('rejects duplicate roles in the same lobby', async () => {
     mockPrisma.party.findUnique.mockResolvedValue({ id: 'party-id', status: 'lobby' });
-    mockPrisma.partyMember.findFirst.mockResolvedValue({
+    mockPrisma.partyMember.findFirst.mockResolvedValueOnce({
       id: 'member-id',
-      primaryRole: 'top',
-      secondaryRole: null,
-    });
+      role: null,
+    }).mockResolvedValueOnce({ id: 'other-member', userId: 'other-user' });
+    mockPrisma.game.findUnique.mockResolvedValue({ roles: ['top', 'jungle', 'mid', 'adc', 'support'] });
 
-    await expect(service.updateMemberRoles('party-id', 'user-id', { secondaryRole: 'top' }))
+    await expect(service.updateMemberRoles('party-id', 'user-id', { gameId: 'game-id', role: 'top' }))
       .rejects.toBeInstanceOf(BadRequestException);
     expect(mockPrisma.partyMember.update).not.toHaveBeenCalled();
   });

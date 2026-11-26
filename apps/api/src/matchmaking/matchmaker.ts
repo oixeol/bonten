@@ -1,9 +1,6 @@
-import { MATCHMAKING_ROLES } from './role-preferences';
-
 export interface QueueMatchMember {
   userId: string;
-  primaryRole: string | null;
-  secondaryRole: string | null;
+  role: string | null;
 }
 
 export interface QueueMatchGroup {
@@ -21,8 +18,10 @@ export function findMatchGroups(
   playersPerMatch: number,
   hasTeams: boolean,
   teamSize: number,
+  requiredRoles: string[] = [],
 ): QueueMatchAssignment[] | null {
   if (playersPerMatch <= 0 || (hasTeams && teamSize * 2 !== playersPerMatch)) return null;
+  if (requiredRoles.length > 0 && (!hasTeams || requiredRoles.length !== teamSize)) return null;
 
   const eligible = groups.filter((group) => (
     group.members.length > 0
@@ -31,25 +30,47 @@ export function findMatchGroups(
 
   if (hasTeams) {
     const memo = new Map<string, QueueMatchAssignment[] | null>();
-    const search = (index: number, teamA: number, teamB: number): QueueMatchAssignment[] | null => {
-      if (teamA === teamSize && teamB === teamSize) return [];
+    const roleIndexes = new Map(requiredRoles.map((role, index) => [role, index]));
+    const allRolesMask = (1 << requiredRoles.length) - 1;
+    const groupRoleMask = (group: QueueMatchGroup): number | null => {
+      if (requiredRoles.length === 0) return 0;
+      let mask = 0;
+      for (const member of group.members) {
+        const roleIndex = member.role ? roleIndexes.get(member.role) : undefined;
+        if (roleIndex === undefined || (mask & (1 << roleIndex)) !== 0) return null;
+        mask |= 1 << roleIndex;
+      }
+      return mask;
+    };
+
+    const search = (
+      index: number,
+      teamA: number,
+      teamB: number,
+      rolesA: number,
+      rolesB: number,
+    ): QueueMatchAssignment[] | null => {
+      if (teamA === teamSize && teamB === teamSize) {
+        return rolesA === allRolesMask && rolesB === allRolesMask ? [] : null;
+      }
       if (index >= eligible.length) return null;
 
-      const state = `${index}:${teamA}:${teamB}`;
+      const state = `${index}:${teamA}:${teamB}:${rolesA}:${rolesB}`;
       if (memo.has(state)) return memo.get(state) ?? null;
 
       const group = eligible[index];
       const size = group.members.length;
-      if (teamA + size <= teamSize) {
-        const result = search(index + 1, teamA + size, teamB);
+      const groupMask = groupRoleMask(group);
+      if (groupMask !== null && teamA + size <= teamSize && (rolesA & groupMask) === 0) {
+        const result = search(index + 1, teamA + size, teamB, rolesA | groupMask, rolesB);
         if (result) {
           const assignment = [{ group, team: 'A' as const }, ...result];
           memo.set(state, assignment);
           return assignment;
         }
       }
-      if (teamB + size <= teamSize) {
-        const result = search(index + 1, teamA, teamB + size);
+      if (groupMask !== null && teamB + size <= teamSize && (rolesB & groupMask) === 0) {
+        const result = search(index + 1, teamA, teamB + size, rolesA, rolesB | groupMask);
         if (result) {
           const assignment = [{ group, team: 'B' as const }, ...result];
           memo.set(state, assignment);
@@ -57,12 +78,12 @@ export function findMatchGroups(
         }
       }
 
-      const skipped = search(index + 1, teamA, teamB);
+      const skipped = search(index + 1, teamA, teamB, rolesA, rolesB);
       memo.set(state, skipped);
       return skipped;
     };
 
-    return search(0, 0, 0);
+    return search(0, 0, 0, 0, 0);
   }
 
   const memo = new Map<string, QueueMatchAssignment[] | null>();
@@ -90,45 +111,4 @@ export function findMatchGroups(
   };
 
   return search(0, playersPerMatch);
-}
-
-export function assignTeamRoles(members: QueueMatchMember[]): string[] {
-  if (members.length > MATCHMAKING_ROLES.length) {
-    throw new Error('A team cannot have more players than available roles');
-  }
-
-  let bestCost = Number.POSITIVE_INFINITY;
-  let bestAssignment: string[] = [];
-
-  const search = (index: number, used: Set<string>, assignment: string[], cost: number) => {
-    if (cost >= bestCost) return;
-    if (index === members.length) {
-      bestCost = cost;
-      bestAssignment = [...assignment];
-      return;
-    }
-
-    const member = members[index];
-    const preferred = [member.primaryRole, member.secondaryRole].filter(
-      (role): role is string => Boolean(role),
-    );
-    const choices = [
-      ...preferred,
-      ...MATCHMAKING_ROLES.filter((role) => !preferred.includes(role)),
-    ];
-
-    for (const role of choices) {
-      if (used.has(role)) continue;
-      const preferenceIndex = preferred.indexOf(role);
-      const score = preferenceIndex === 0 ? 0 : preferenceIndex === 1 ? 1 : 2;
-      used.add(role);
-      assignment.push(role);
-      search(index + 1, used, assignment, cost + score);
-      assignment.pop();
-      used.delete(role);
-    }
-  };
-
-  search(0, new Set(), [], 0);
-  return bestAssignment;
 }

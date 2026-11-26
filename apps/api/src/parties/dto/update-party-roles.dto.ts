@@ -1,12 +1,11 @@
-import { IsIn, IsOptional } from 'class-validator';
-import { MATCHMAKING_ROLES } from '../../matchmaking/role-preferences';
+import { IsOptional, IsString, IsUUID, Length } from 'class-validator';
 
 export class UpdatePartyRolesDto {
-  @IsOptional()
-  @IsIn(MATCHMAKING_ROLES)
-  primaryRole?: string | null;
+  @IsUUID()
+  gameId!: string;
 
   @IsOptional()
-  @IsIn(MATCHMAKING_ROLES)
-  secondaryRole?: string | null;
+  @IsString()
+  @Length(1, 32)
+  role?: string | null;
 }

@@ -25,20 +25,14 @@ import {
   LockOpen,
   LogOut,
   Plus,
+  RefreshCw,
   Search,
   UserPlus,
   Users,
   X as XIcon,
 } from 'lucide-react';
 
-interface Game { id: string; slug: string; name: string; partySizesAllowed: number[]; }
-const LOL_ROLES = [
-  { value: 'top', label: 'Topo' },
-  { value: 'jungle', label: 'Selva' },
-  { value: 'mid', label: 'Meio' },
-  { value: 'bot', label: 'Atirador' },
-  { value: 'support', label: 'Suporte' },
-];
+interface Game { id: string; slug: string; name: string; partySizesAllowed: number[]; roles?: string[]; }
 
 interface PartyCardUser {
   id: string;
@@ -92,6 +86,7 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueNow, setQueueNow] = useState(Date.now());
   const [groupCodeCopied, setGroupCodeCopied] = useState(false);
+  const [inviteCodeBusy, setInviteCodeBusy] = useState(false);
   const [roleSaving, setRoleSaving] = useState(false);
   const [matchAccepting, setMatchAccepting] = useState(false);
   const [matchAccepted, setMatchAccepted] = useState(false);
@@ -290,13 +285,41 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
   };
 
   const handleCopyGroupCode = async () => {
-    if (!myParty) return;
+    if (!myParty?.inviteCode) return;
     try {
-      await navigator.clipboard.writeText(myParty.id);
+      await navigator.clipboard.writeText(myParty.inviteCode);
       setGroupCodeCopied(true);
       window.setTimeout(() => setGroupCodeCopied(false), 2000);
     } catch (err) {
       setLobbyError(err instanceof Error ? err.message : 'Não foi possível copiar o código do grupo.');
+    }
+  };
+
+  const handleRegenerateInviteCode = async () => {
+    if (!myParty || myParty.leaderId !== user?.id || inviteCodeBusy) return;
+    setInviteCodeBusy(true);
+    setLobbyError(null);
+    try {
+      const code = await partiesApi.regenerateInviteCode(myParty.id);
+      setMyParty((current) => current ? { ...current, ...code } : current);
+    } catch (err) {
+      setLobbyError(err instanceof Error ? err.message : 'Não foi possível gerar um novo código.');
+    } finally {
+      setInviteCodeBusy(false);
+    }
+  };
+
+  const handleRevokeInviteCode = async () => {
+    if (!myParty || myParty.leaderId !== user?.id || inviteCodeBusy) return;
+    setInviteCodeBusy(true);
+    setLobbyError(null);
+    try {
+      await partiesApi.revokeInviteCode(myParty.id);
+      setMyParty((current) => current ? { ...current, inviteCode: null, inviteCodeExpiresAt: null } : current);
+    } catch (err) {
+      setLobbyError(err instanceof Error ? err.message : 'Não foi possível revogar o código.');
+    } finally {
+      setInviteCodeBusy(false);
     }
   };
 
@@ -327,26 +350,15 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
     }
   };
 
-  const handleUpdateRole = async (field: 'primaryRole' | 'secondaryRole', value: string) => {
+  const handleUpdateRole = async (value: string) => {
     if (!myParty) return;
     const member = myParty.members?.find((partyMember) => partyMember.userId === user?.id);
     if (!member) return;
 
-    const selectedRole = value || null;
-    const roles = field === 'primaryRole'
-      ? {
-          primaryRole: selectedRole,
-          ...(selectedRole && selectedRole === member.secondaryRole ? { secondaryRole: null } : {}),
-        }
-      : {
-          secondaryRole: selectedRole,
-          ...(selectedRole && selectedRole === member.primaryRole ? { primaryRole: null } : {}),
-        };
-
     setRoleSaving(true);
     setLobbyError(null);
     try {
-      const updatedMember = await partiesApi.updateRoles(myParty.id, roles);
+      const updatedMember = await partiesApi.updateRole(myParty.id, selectedGame, value || null);
       setMyParty((current) => current ? {
         ...current,
         members: current.members?.map((partyMember) => (
@@ -395,14 +407,24 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
     (friendship) => !myParty?.members?.some((member) => member.userId === friendship.friend.id),
   );
   const selectedGameConfig = games.find((game) => game.id === selectedGame);
+  const configuredRoles = selectedGameConfig?.roles ?? [];
   const currentPartyMember = myParty?.members?.find((member) => member.userId === user?.id);
   const currentPartySize = myParty?.members?.length ?? 1;
+  const members = myParty?.members ?? [];
+  const selectedRoles = members.map((member) => member.role).filter((role): role is string => Boolean(role));
+  const allRolesSelected = configuredRoles.length === 0
+    || (members.length === currentPartySize
+      && members.every((member) => member.role && configuredRoles.includes(member.role))
+      && new Set(selectedRoles).size === members.length);
   const canJoinQueue = currentPartySize !== 4
-    && (selectedGameConfig?.partySizesAllowed.includes(currentPartySize) ?? false);
+    && (selectedGameConfig?.partySizesAllowed.includes(currentPartySize) ?? false)
+    && allRolesSelected;
   const partySizeError = myParty && selectedGameConfig && !canJoinQueue
     ? currentPartySize === 4
       ? 'Lobbies com 4 jogadores não podem entrar na fila. Remova um jogador ou convide mais um.'
-      : `Este jogo permite grupos de ${selectedGameConfig.partySizesAllowed.join(', ')} jogadores. O lobby atual tem ${currentPartySize}.`
+      : !selectedGameConfig.partySizesAllowed.includes(currentPartySize)
+        ? `Este jogo permite grupos de ${selectedGameConfig.partySizesAllowed.join(', ')} jogadores. O lobby atual tem ${currentPartySize}.`
+        : 'Cada jogador precisa selecionar uma rota diferente antes de entrar na fila.'
     : null;
 
   return (
@@ -480,18 +502,51 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
                 </Button>
                 <div className="flex max-w-full items-center gap-1">
                   <code className="max-w-64 break-all text-center text-[10px] text-fg-muted" aria-label="Código do grupo">
-                    {myParty.id}
+                    {myParty.inviteCode || 'Código desativado'}
                   </code>
-                  <button
-                    type="button"
-                    onClick={() => void handleCopyGroupCode()}
-                    aria-label={groupCodeCopied ? 'Código copiado' : 'Copiar código do grupo'}
-                    title={groupCodeCopied ? 'Código copiado' : 'Copiar código do grupo'}
-                    className="shrink-0 rounded p-1 text-fg-muted hover:bg-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-brand"
-                  >
-                    {groupCodeCopied ? <Check size={14} /> : <Copy size={14} />}
-                  </button>
+                  {myParty.inviteCode && (
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyGroupCode()}
+                      aria-label={groupCodeCopied ? 'Código copiado' : 'Copiar código do grupo'}
+                      title={groupCodeCopied ? 'Código copiado' : 'Copiar código do grupo'}
+                      className="shrink-0 rounded p-1 text-fg-muted hover:bg-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-brand"
+                    >
+                      {groupCodeCopied ? <Check size={14} /> : <Copy size={14} />}
+                    </button>
+                  )}
+                  {myParty.leaderId === user?.id && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleRegenerateInviteCode()}
+                        disabled={inviteCodeBusy || myParty.status !== 'lobby'}
+                        aria-label="Gerar novo código do grupo"
+                        title="Gerar novo código do grupo"
+                        className="shrink-0 rounded p-1 text-fg-muted hover:bg-raised hover:text-fg disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-brand"
+                      >
+                        <RefreshCw size={14} />
+                      </button>
+                      {myParty.inviteCode && (
+                        <button
+                          type="button"
+                          onClick={() => void handleRevokeInviteCode()}
+                          disabled={inviteCodeBusy || myParty.status !== 'lobby'}
+                          aria-label="Revogar código do grupo"
+                          title="Revogar código do grupo"
+                          className="shrink-0 rounded p-1 text-fg-muted hover:bg-raised hover:text-red-500 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-brand"
+                        >
+                          <XIcon size={14} />
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
+                {myParty.inviteCodeExpiresAt && (
+                  <span className="text-center text-[10px] text-fg-muted">
+                    Expira em {new Date(myParty.inviteCodeExpiresAt).toLocaleString('pt-BR')}
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -499,6 +554,7 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
           <div aria-label="Jogadores do lobby" className="grid grid-cols-5 items-end gap-1.5 sm:gap-3">
             {lobbySlots.map((player, index) => {
               const isCurrentUser = index === 2;
+              const playerRole = player && myParty?.members?.find((member) => member.userId === player.id)?.role;
               const initials = (player?.displayName || player?.username || '?').slice(0, 1).toUpperCase();
               const stairHeightClass = index === 2
                 ? 'aspect-[3/5]'
@@ -531,6 +587,11 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
                     <p className="truncate text-[9px] font-semibold text-fg sm:text-xs" title={player ? `@${player.username}` : 'Vaga livre'}>
                       {player ? `@${player.username}` : 'Vaga livre'}
                     </p>
+                    {configuredRoles.length > 0 && player && (
+                      <p className={`mt-1 truncate text-[8px] font-semibold uppercase sm:text-[10px] ${playerRole ? 'text-brand' : 'text-warning'}`}>
+                        {playerRole ?? 'Rota pendente'}
+                      </p>
+                    )}
                     <span
                       aria-label="Pontuação a definir"
                       title="Método de pontuação a definir"
@@ -561,32 +622,24 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
             })}
           </div>
 
-          {autoCreateLobby && myParty && selectedGameConfig?.slug === 'lol' && !queueEntry && (
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {autoCreateLobby && myParty && configuredRoles.length > 0 && !queueEntry && (
+            <div className="mt-4 max-w-sm">
               <label className="grid gap-1 text-xs font-medium text-fg-muted">
-                Rota principal
+                Sua rota (obrigatória)
                 <select
-                  value={currentPartyMember?.primaryRole ?? ''}
-                  onChange={(event) => void handleUpdateRole('primaryRole', event.target.value)}
+                  value={currentPartyMember?.role ?? ''}
+                  onChange={(event) => void handleUpdateRole(event.target.value)}
                   disabled={roleSaving || queueLoading}
                   className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg"
                 >
-                  <option value="">Qualquer rota</option>
-                  {LOL_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
-                </select>
-              </label>
-              <label className="grid gap-1 text-xs font-medium text-fg-muted">
-                Rota secundária
-                <select
-                  value={currentPartyMember?.secondaryRole ?? ''}
-                  onChange={(event) => void handleUpdateRole('secondaryRole', event.target.value)}
-                  disabled={roleSaving || queueLoading}
-                  className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg"
-                >
-                  <option value="">Sem preferência</option>
-                  {LOL_ROLES.map((role) => (
-                    <option key={role.value} value={role.value} disabled={role.value === currentPartyMember?.primaryRole}>
-                      {role.label}
+                  <option value="">Selecione uma rota</option>
+                  {configuredRoles.map((role) => (
+                    <option
+                      key={role}
+                      value={role}
+                      disabled={members.some((other) => other.userId !== user?.id && other.role === role)}
+                    >
+                      {role.toUpperCase()}
                     </option>
                   ))}
                 </select>

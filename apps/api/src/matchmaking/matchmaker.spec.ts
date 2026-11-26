@@ -1,11 +1,10 @@
-import { assignTeamRoles, findMatchGroups, QueueMatchGroup } from './matchmaker';
+import { findMatchGroups, QueueMatchGroup } from './matchmaker';
 
 const group = (id: string, count: number): QueueMatchGroup => ({
   id,
   members: Array.from({ length: count }, (_, index) => ({
     userId: `${id}-${index}`,
-    primaryRole: null,
-    secondaryRole: null,
+    role: null,
   })),
 });
 
@@ -34,13 +33,44 @@ describe('matchmaker', () => {
     ]);
   });
 
-  it('assigns unique team roles while honoring primary and secondary preferences', () => {
-    const members = [
-      { userId: 'one', primaryRole: 'mid', secondaryRole: 'top' },
-      { userId: 'two', primaryRole: 'mid', secondaryRole: 'jungle' },
-      { userId: 'three', primaryRole: null, secondaryRole: null },
-    ];
+  it('fills every configured role without changing player selections', () => {
+    const roles = ['top', 'jungle', 'mid', 'adc', 'support'];
+    const roleGroup = (id: string, selectedRoles: string[]): QueueMatchGroup => ({
+      id,
+      members: selectedRoles.map((role, index) => ({ userId: `${id}-${index}`, role })),
+    });
+    const result = findMatchGroups([
+      roleGroup('trio', ['top', 'mid', 'adc']),
+      roleGroup('jungle-solo', ['jungle']),
+      roleGroup('support-solo', ['support']),
+      roleGroup('other-team', roles),
+    ], 10, true, 5, roles);
 
-    expect(assignTeamRoles(members)).toEqual(['mid', 'jungle', 'top']);
+    expect(result?.map(({ group: selected, team }) => [selected.id, team])).toEqual([
+      ['trio', 'A'],
+      ['jungle-solo', 'A'],
+      ['support-solo', 'A'],
+      ['other-team', 'B'],
+    ]);
+    expect(result?.flatMap(({ group: selected }) => selected.members.map((member) => member.role)))
+      .toEqual(['top', 'mid', 'adc', 'jungle', 'support', ...roles]);
+  });
+
+  it('does not form a team when a party has duplicate routes', () => {
+    const roles = ['top', 'jungle', 'mid', 'adc', 'support'];
+    const duplicateParty: QueueMatchGroup = {
+      id: 'duplicate-party',
+      members: [
+        { userId: 'one', role: 'top' },
+        { userId: 'two', role: 'top' },
+      ],
+    };
+    const result = findMatchGroups([
+      duplicateParty,
+      { id: 'trio', members: roles.slice(0, 3).map((role) => ({ userId: role, role })) },
+      { id: 'full', members: roles.map((role) => ({ userId: `full-${role}`, role })) },
+    ], 10, true, 5, roles);
+
+    expect(result).toBeNull();
   });
 });

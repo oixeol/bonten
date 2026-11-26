@@ -13,6 +13,7 @@ export default function MatchmakingPage() {
 
   const [games, setGames] = useState<Game[]>([]);
   const [selectedGame, setSelectedGame] = useState('');
+  const [selectedRole, setSelectedRole] = useState('');
   const [mode, setMode] = useState('ranked');
   const [region, setRegion] = useState('BR');
   const [inQueue, setInQueue] = useState(false);
@@ -22,6 +23,8 @@ export default function MatchmakingPage() {
   const [matchAccepted, setMatchAccepted] = useState(false);
   const [matchStarted, setMatchStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedGameConfig = games.find((game) => game.id === selectedGame);
+  const requiredRoles = selectedGameConfig?.roles ?? [];
 
   useEffect(() => {
     gamesApi.list().then((g) => {
@@ -57,7 +60,7 @@ export default function MatchmakingPage() {
     setLoading(true);
     setError(null);
     try {
-      const entry = await matchmakingApi.joinQueue(selectedGame, mode, region);
+      const entry = await matchmakingApi.joinQueue(selectedGame, mode, region, selectedRole || null);
       setQueueEntry(entry);
       setInQueue(true);
       setMatchAccepted(false);
@@ -106,10 +109,30 @@ export default function MatchmakingPage() {
           <div className="space-y-4">
             <div>
               <label className="text-sm text-fg">Jogo</label>
-              <select value={selectedGame} onChange={(e) => setSelectedGame(e.target.value)} className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm">
+              <select
+                value={selectedGame}
+                onChange={(e) => {
+                  setSelectedGame(e.target.value);
+                  setSelectedRole('');
+                }}
+                className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+              >
                 {games.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
             </div>
+            {requiredRoles.length > 0 && (
+              <div>
+                <label className="text-sm text-fg">Rota obrigatória</label>
+                <select
+                  value={selectedRole}
+                  onChange={(event) => setSelectedRole(event.target.value)}
+                  className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+                >
+                  <option value="">Selecione uma rota</option>
+                  {requiredRoles.map((role) => <option key={role} value={role}>{role.toUpperCase()}</option>)}
+                </select>
+              </div>
+            )}
             <div>
               <label className="text-sm text-fg">Modalidade</label>
               <Input value={mode} onChange={(e) => setMode(e.target.value)} placeholder="ranked" />
@@ -119,7 +142,7 @@ export default function MatchmakingPage() {
               <Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="BR" />
             </div>
             {error && <p className="text-sm text-danger">{error}</p>}
-            <Button onClick={handleJoinQueue} disabled={loading || !selectedGame} className="w-full">
+            <Button onClick={handleJoinQueue} disabled={loading || !selectedGame || (requiredRoles.length > 0 && !selectedRole)} className="w-full">
               {loading ? <Loader2 size={16} className="animate-spin" /> : <><Play size={16} /> Jogar</>}
             </Button>
           </div>

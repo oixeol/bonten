@@ -17,8 +17,7 @@ export class MatchmakingController {
       body.gameId,
       body.mode,
       body.region,
-      body.primaryRole,
-      body.secondaryRole,
+      body.role,
     );
   }
 

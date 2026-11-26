@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { assignTeamRoles, findMatchGroups, QueueMatchMember } from './matchmaker';
+import { findMatchGroups, QueueMatchMember } from './matchmaker';
 
 @Injectable()
 export class MatchmakingService {
@@ -18,8 +18,7 @@ export class MatchmakingService {
     gameId: string,
     mode: string,
     region: string,
-    primaryRole?: string | null,
-    secondaryRole?: string | null,
+    role?: string | null,
   ) {
     const entry = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
@@ -44,20 +43,21 @@ export class MatchmakingService {
           playersPerMatch: true,
           teamSize: true,
           hasTeams: true,
+          roles: true,
         },
       });
       if (!game) throw new NotFoundException('Game not found');
-      if (secondaryRole && !primaryRole) {
-        throw new BadRequestException('A primary role is required when a secondary role is selected');
+      if (role && !game.roles.includes(role)) {
+        throw new BadRequestException('Selected role is not available for this game');
       }
-      if (primaryRole && primaryRole === secondaryRole) {
-        throw new BadRequestException('Primary and secondary roles must be different');
+      if (partyMember && role) {
+        throw new BadRequestException('Each lobby member must select their own role before queueing');
       }
-      if (game.slug !== 'lol' && (primaryRole || secondaryRole)) {
-        throw new BadRequestException('Role preferences are only available for League of Legends');
+      if (!partyMember && game.roles.length > 0 && !role) {
+        throw new BadRequestException('Select one role before entering this game queue');
       }
-      if (partyMember && (primaryRole || secondaryRole)) {
-        throw new BadRequestException('Set route preferences individually in the lobby before queueing');
+      if (game.roles.length === 0 && role) {
+        throw new BadRequestException('Role selection is not available for this game');
       }
 
       const partySize = partyMember
@@ -70,6 +70,22 @@ export class MatchmakingService {
         throw new BadRequestException(
           `Este jogo permite grupos de ${game.partySizesAllowed.join(', ')} jogadores; o lobby atual tem ${partySize}.`,
         );
+      }
+
+      const members = partyMember
+        ? await tx.partyMember.findMany({
+            where: { partyId: partyMember.partyId },
+            select: { userId: true, role: true },
+          })
+        : [{ userId, role: role ?? null }];
+      if (game.roles.length > 0) {
+        const selectedRoles = members.map((member) => member.role);
+        if (selectedRoles.some((memberRole) => !memberRole || !game.roles.includes(memberRole))) {
+          throw new BadRequestException('Every lobby member must select one valid role before queueing');
+        }
+        if (new Set(selectedRoles).size !== selectedRoles.length) {
+          throw new BadRequestException('Lobby members must select different roles');
+        }
       }
 
       const queueScope = partyMember ? { partyId: partyMember.partyId } : { userId };
@@ -97,18 +113,11 @@ export class MatchmakingService {
         },
       });
 
-      const members = partyMember
-        ? await tx.partyMember.findMany({
-            where: { partyId: partyMember.partyId },
-            select: { userId: true, primaryRole: true, secondaryRole: true },
-          })
-        : [{ userId, primaryRole: primaryRole ?? null, secondaryRole: secondaryRole ?? null }];
       await tx.matchmakingQueueMember.createMany({
         data: members.map((member) => ({
           queueId: queueEntry.id,
           userId: member.userId,
-          primaryRole: game.slug === 'lol' ? member.primaryRole : null,
-          secondaryRole: game.slug === 'lol' ? member.secondaryRole : null,
+          role: game.roles.length > 0 ? member.role : null,
         })),
       });
 
@@ -127,7 +136,7 @@ export class MatchmakingService {
     gameId: string,
     mode: string,
     region: string,
-    game: { playersPerMatch: number; teamSize: number; hasTeams: boolean },
+    game: { playersPerMatch: number; teamSize: number; hasTeams: boolean; roles: string[] },
   ) {
     const scope = `${gameId}:${mode}:${region}`;
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${scope}, 0))`;
@@ -151,7 +160,7 @@ export class MatchmakingService {
       orderBy: [{ joinedAt: 'asc' }, { id: 'asc' }],
       include: {
         members: {
-          select: { userId: true, primaryRole: true, secondaryRole: true },
+          select: { userId: true, role: true },
           orderBy: { createdAt: 'asc' },
         },
       },
@@ -161,6 +170,7 @@ export class MatchmakingService {
       game.playersPerMatch,
       game.hasTeams,
       game.teamSize,
+      game.roles,
     );
     if (!assignments) return null;
 
@@ -179,13 +189,12 @@ export class MatchmakingService {
         const members = assignments
           .filter((assignment) => assignment.team === team)
           .flatMap((assignment) => assignment.group.members);
-        const roles = assignTeamRoles(members);
-        members.forEach((member: QueueMatchMember, index) => {
+        members.forEach((member: QueueMatchMember) => {
           matchPlayers.push({
             matchId: match.id,
             userId: member.userId,
             team,
-            role: roles[index] ?? null,
+            role: member.role,
           });
         });
       }
