@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { HttpStatus } from '@nestjs/common';
+import { BadRequestException, HttpStatus } from '@nestjs/common';
 import { PartiesService } from './parties.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
@@ -12,6 +12,7 @@ const mockPrisma = {
     create: jest.fn(),
     delete: jest.fn(),
     count: jest.fn(),
+    update: jest.fn(),
   },
   party: {
     findUnique: jest.fn(),
@@ -91,5 +92,38 @@ describe('PartiesService', () => {
       60,
     );
     expect(mockPrisma.party.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('updates only the requesting member role preferences while in the lobby', async () => {
+    const member = {
+      id: 'member-id',
+      partyId: 'party-id',
+      userId: 'user-id',
+      primaryRole: 'top',
+      secondaryRole: null,
+    };
+    mockPrisma.party.findUnique.mockResolvedValue({ id: 'party-id', status: 'lobby' });
+    mockPrisma.partyMember.findFirst.mockResolvedValue(member);
+    mockPrisma.partyMember.update.mockResolvedValue({ ...member, secondaryRole: 'support' });
+
+    await expect(service.updateMemberRoles('party-id', 'user-id', { secondaryRole: 'support' }))
+      .resolves.toMatchObject({ primaryRole: 'top', secondaryRole: 'support' });
+    expect(mockPrisma.partyMember.update).toHaveBeenCalledWith({
+      where: { id: 'member-id' },
+      data: { primaryRole: 'top', secondaryRole: 'support' },
+    });
+  });
+
+  it('rejects duplicate primary and secondary role preferences', async () => {
+    mockPrisma.party.findUnique.mockResolvedValue({ id: 'party-id', status: 'lobby' });
+    mockPrisma.partyMember.findFirst.mockResolvedValue({
+      id: 'member-id',
+      primaryRole: 'top',
+      secondaryRole: null,
+    });
+
+    await expect(service.updateMemberRoles('party-id', 'user-id', { secondaryRole: 'top' }))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(mockPrisma.partyMember.update).not.toHaveBeenCalled();
   });
 });

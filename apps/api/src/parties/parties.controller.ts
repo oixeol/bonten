@@ -3,6 +3,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { PartiesService } from './parties.service';
 import { ParseUUIDPipe } from '@nestjs/common';
+import { UpdatePartyRolesDto } from './dto/update-party-roles.dto';
 
 @Controller('parties')
 @UseGuards(AuthGuard)
@@ -57,6 +58,15 @@ export class PartiesController {
   @Put(':id/ready')
   async setReady(@CurrentUser() user: { id: string }, @Param('id', ParseUUIDPipe) id: string, @Body() body: { ready: boolean }) {
     return this.parties.setReady(id, user.id, body.ready);
+  }
+
+  @Put(':id/roles')
+  async updateMemberRoles(
+    @CurrentUser() user: { id: string },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: UpdatePartyRolesDto,
+  ) {
+    return this.parties.updateMemberRoles(id, user.id, body);
   }
 
   @Put(':id/open')

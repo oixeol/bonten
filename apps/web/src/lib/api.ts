@@ -492,6 +492,8 @@ export interface PartyMember {
   partyId: string;
   userId: string;
   user: { id: string; username: string; displayName: string; avatarUrl: string | null; status: string };
+  primaryRole: string | null;
+  secondaryRole: string | null;
   ready: boolean;
   joinedAt: string;
 }
@@ -509,8 +511,8 @@ export interface PartyInvite {
 }
 
 export const matchmakingApi = {
-  joinQueue: (gameId: string, mode: string, region: string) =>
-    apiFetch<MatchmakingQueueEntry>('/matchmaking/queue', { method: 'POST', body: { gameId, mode, region } }),
+  joinQueue: (gameId: string, mode: string, region: string, roles?: { primaryRole?: string | null; secondaryRole?: string | null }) =>
+    apiFetch<MatchmakingQueueEntry>('/matchmaking/queue', { method: 'POST', body: { gameId, mode, region, ...roles } }),
   leaveQueue: () => apiFetch<{ left: boolean }>('/matchmaking/queue', { method: 'DELETE' }),
   status: () => apiFetch<MatchmakingQueueEntry | null>('/matchmaking/queue/status'),
   getMatch: (id: string) => apiFetch<any>(`/matchmaking/match/${id}`),
@@ -529,6 +531,8 @@ export const partiesApi = {
   declineInvite: (inviteId: string) => apiFetch<{ declined: boolean }>(`/parties/invites/${inviteId}/decline`, { method: 'POST' }),
   leave: (partyId: string) => apiFetch<{ left: boolean }>(`/parties/${partyId}/leave`, { method: 'DELETE' }),
   setReady: (partyId: string, ready: boolean) => apiFetch<{ ready: boolean }>(`/parties/${partyId}/ready`, { method: 'PUT', body: { ready } }),
+  updateRoles: (partyId: string, roles: { primaryRole?: string | null; secondaryRole?: string | null }) =>
+    apiFetch<PartyMember>(`/parties/${partyId}/roles`, { method: 'PUT', body: roles }),
   toggleOpen: (partyId: string) => apiFetch<{ isOpen: boolean }>(`/parties/${partyId}/open`, { method: 'PUT' }),
   removeMember: (partyId: string, userId: string) => apiFetch<{ removed: boolean }>(`/parties/${partyId}/members/${userId}`, { method: 'DELETE' }),
 };

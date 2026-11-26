@@ -13,9 +13,10 @@ const userId = '00000000-0000-4000-8000-000000000003';
 const tx = {
   $queryRaw: jest.fn(),
   game: { findUnique: jest.fn() },
-  partyMember: { findFirst: jest.fn(), count: jest.fn() },
+  partyMember: { findFirst: jest.fn(), findMany: jest.fn(), count: jest.fn() },
   party: { updateMany: jest.fn() },
   matchmakingQueue: { findFirst: jest.fn(), create: jest.fn() },
+  matchmakingQueueMember: { createMany: jest.fn() },
   match: { findFirst: jest.fn(), updateMany: jest.fn() },
 };
 
@@ -31,12 +32,14 @@ describe('MatchmakingService queue admission', () => {
     jest.clearAllMocks();
     service = new MatchmakingService(prisma as never);
     tx.$queryRaw.mockResolvedValue([]);
-    tx.game.findUnique.mockResolvedValue({ partySizesAllowed: [1, 2, 3, 5] });
+    tx.game.findUnique.mockResolvedValue({ partySizesAllowed: [1, 2, 3, 5], slug: 'lol' });
     tx.partyMember.findFirst.mockResolvedValue(null);
+    tx.partyMember.findMany.mockResolvedValue([]);
     tx.partyMember.count.mockResolvedValue(1);
     tx.matchmakingQueue.findFirst.mockResolvedValue(null);
     tx.party.updateMany.mockResolvedValue({ count: 1 });
     tx.matchmakingQueue.create.mockResolvedValue({ id: 'queue-entry', status: 'waiting' });
+    tx.matchmakingQueueMember.createMany.mockResolvedValue({ count: 1 });
     tx.match.findFirst.mockResolvedValue(null);
     tx.match.updateMany.mockResolvedValue({ count: 1 });
     prisma.match.findFirst.mockResolvedValue(null);
@@ -63,7 +66,7 @@ describe('MatchmakingService queue admission', () => {
   });
 
   it('rejects a four-player party before creating a queue entry', async () => {
-    tx.game.findUnique.mockResolvedValue({ partySizesAllowed: [1, 2, 3, 4, 5] });
+    tx.game.findUnique.mockResolvedValue({ partySizesAllowed: [1, 2, 3, 4, 5], slug: 'lol' });
     tx.partyMember.findFirst.mockResolvedValue({ partyId, party: { status: 'lobby' } });
     tx.partyMember.count.mockResolvedValue(4);
 
@@ -75,13 +78,49 @@ describe('MatchmakingService queue admission', () => {
   });
 
   it('uses the game-specific allowed party sizes', async () => {
-    tx.game.findUnique.mockResolvedValue({ partySizesAllowed: [1, 2] });
+    tx.game.findUnique.mockResolvedValue({ partySizesAllowed: [1, 2], slug: 'tft' });
     tx.partyMember.findFirst.mockResolvedValue({ partyId, party: { status: 'lobby' } });
     tx.partyMember.count.mockResolvedValue(3);
 
     await expect(service.joinQueue(userId, gameId, 'ranked', 'BR'))
       .rejects.toBeInstanceOf(BadRequestException);
     expect(tx.matchmakingQueue.create).not.toHaveBeenCalled();
+  });
+
+  it('snapshots per-player role preferences for solo queue entries', async () => {
+    await service.joinQueue(userId, gameId, 'ranked', 'BR', 'mid', 'support');
+
+    expect(tx.matchmakingQueueMember.createMany).toHaveBeenCalledWith({
+      data: [{
+        queueId: 'queue-entry',
+        userId,
+        primaryRole: 'mid',
+        secondaryRole: 'support',
+      }],
+    });
+  });
+
+  it('snapshots every party member preference without splitting the party', async () => {
+    tx.partyMember.findFirst.mockResolvedValue({ partyId, party: { status: 'lobby' } });
+    tx.partyMember.count.mockResolvedValue(2);
+    tx.partyMember.findMany.mockResolvedValue([
+      { userId, primaryRole: 'top', secondaryRole: 'mid' },
+      { userId: '00000000-0000-4000-8000-000000000004', primaryRole: 'support', secondaryRole: null },
+    ]);
+
+    await service.joinQueue(userId, gameId, 'ranked', 'BR');
+
+    expect(tx.matchmakingQueueMember.createMany).toHaveBeenCalledWith({
+      data: [
+        { queueId: 'queue-entry', userId, primaryRole: 'top', secondaryRole: 'mid' },
+        {
+          queueId: 'queue-entry',
+          userId: '00000000-0000-4000-8000-000000000004',
+          primaryRole: 'support',
+          secondaryRole: null,
+        },
+      ],
+    });
   });
 
   it('serializes queue admission and rejects a party already queued', async () => {

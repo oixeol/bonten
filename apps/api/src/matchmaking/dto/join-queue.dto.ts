@@ -1,4 +1,5 @@
-import { IsString, IsUUID, Length } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, Length } from 'class-validator';
+import { MATCHMAKING_ROLES } from '../role-preferences';
 
 export class JoinQueueDto {
   @IsUUID()
@@ -11,4 +12,12 @@ export class JoinQueueDto {
   @IsString()
   @Length(2, 16)
   region!: string;
+
+  @IsOptional()
+  @IsIn(MATCHMAKING_ROLES)
+  primaryRole?: string | null;
+
+  @IsOptional()
+  @IsIn(MATCHMAKING_ROLES)
+  secondaryRole?: string | null;
 }

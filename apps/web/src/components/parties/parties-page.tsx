@@ -32,6 +32,13 @@ import {
 } from 'lucide-react';
 
 interface Game { id: string; slug: string; name: string; partySizesAllowed: number[]; }
+const LOL_ROLES = [
+  { value: 'top', label: 'Topo' },
+  { value: 'jungle', label: 'Selva' },
+  { value: 'mid', label: 'Meio' },
+  { value: 'bot', label: 'Atirador' },
+  { value: 'support', label: 'Suporte' },
+];
 
 interface PartyCardUser {
   id: string;
@@ -85,6 +92,7 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueNow, setQueueNow] = useState(Date.now());
   const [groupCodeCopied, setGroupCodeCopied] = useState(false);
+  const [roleSaving, setRoleSaving] = useState(false);
 
   const lobbySlots: (PartyCardUser | null)[] = Array.from({ length: PARTY_CAPACITY }, () => null);
   if (user) {
@@ -304,6 +312,39 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
     }
   };
 
+  const handleUpdateRole = async (field: 'primaryRole' | 'secondaryRole', value: string) => {
+    if (!myParty) return;
+    const member = myParty.members?.find((partyMember) => partyMember.userId === user?.id);
+    if (!member) return;
+
+    const selectedRole = value || null;
+    const roles = field === 'primaryRole'
+      ? {
+          primaryRole: selectedRole,
+          ...(selectedRole && selectedRole === member.secondaryRole ? { secondaryRole: null } : {}),
+        }
+      : {
+          secondaryRole: selectedRole,
+          ...(selectedRole && selectedRole === member.primaryRole ? { primaryRole: null } : {}),
+        };
+
+    setRoleSaving(true);
+    setLobbyError(null);
+    try {
+      const updatedMember = await partiesApi.updateRoles(myParty.id, roles);
+      setMyParty((current) => current ? {
+        ...current,
+        members: current.members?.map((partyMember) => (
+          partyMember.id === updatedMember.id ? { ...partyMember, ...updatedMember } : partyMember
+        )),
+      } : current);
+    } catch (err) {
+      setLobbyError(err instanceof Error ? err.message : 'Não foi possível salvar suas rotas.');
+    } finally {
+      setRoleSaving(false);
+    }
+  };
+
   const handleLeaveQueue = async () => {
     setQueueLoading(true);
     setLobbyError(null);
@@ -322,6 +363,7 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
     (friendship) => !myParty?.members?.some((member) => member.userId === friendship.friend.id),
   );
   const selectedGameConfig = games.find((game) => game.id === selectedGame);
+  const currentPartyMember = myParty?.members?.find((member) => member.userId === user?.id);
   const currentPartySize = myParty?.members?.length ?? 1;
   const canJoinQueue = currentPartySize !== 4
     && (selectedGameConfig?.partySizesAllowed.includes(currentPartySize) ?? false);
@@ -486,6 +528,39 @@ export default function PartyLobbyPage({ autoCreateLobby = false, mode }: PartyL
               );
             })}
           </div>
+
+          {autoCreateLobby && myParty && selectedGameConfig?.slug === 'lol' && !queueEntry && (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-1 text-xs font-medium text-fg-muted">
+                Rota principal
+                <select
+                  value={currentPartyMember?.primaryRole ?? ''}
+                  onChange={(event) => void handleUpdateRole('primaryRole', event.target.value)}
+                  disabled={roleSaving || queueLoading}
+                  className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg"
+                >
+                  <option value="">Qualquer rota</option>
+                  {LOL_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-medium text-fg-muted">
+                Rota secundária
+                <select
+                  value={currentPartyMember?.secondaryRole ?? ''}
+                  onChange={(event) => void handleUpdateRole('secondaryRole', event.target.value)}
+                  disabled={roleSaving || queueLoading}
+                  className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg"
+                >
+                  <option value="">Sem preferência</option>
+                  {LOL_ROLES.map((role) => (
+                    <option key={role.value} value={role.value} disabled={role.value === currentPartyMember?.primaryRole}>
+                      {role.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
 
           {autoCreateLobby && (
             <div className="mt-8 flex min-h-28 flex-col items-center justify-center gap-3 text-center">

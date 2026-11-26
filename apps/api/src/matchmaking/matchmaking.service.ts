@@ -11,7 +11,14 @@ import { PrismaService } from '../prisma/prisma.service';
 export class MatchmakingService {
   constructor(private prisma: PrismaService) {}
 
-  async joinQueue(userId: string, gameId: string, mode: string, region: string) {
+  async joinQueue(
+    userId: string,
+    gameId: string,
+    mode: string,
+    region: string,
+    primaryRole?: string | null,
+    secondaryRole?: string | null,
+  ) {
     const entry = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
 
@@ -29,9 +36,21 @@ export class MatchmakingService {
 
       const game = await tx.game.findUnique({
         where: { id: gameId },
-        select: { partySizesAllowed: true },
+        select: { partySizesAllowed: true, slug: true },
       });
       if (!game) throw new NotFoundException('Game not found');
+      if (secondaryRole && !primaryRole) {
+        throw new BadRequestException('A primary role is required when a secondary role is selected');
+      }
+      if (primaryRole && primaryRole === secondaryRole) {
+        throw new BadRequestException('Primary and secondary roles must be different');
+      }
+      if (game.slug !== 'lol' && (primaryRole || secondaryRole)) {
+        throw new BadRequestException('Role preferences are only available for League of Legends');
+      }
+      if (partyMember && (primaryRole || secondaryRole)) {
+        throw new BadRequestException('Set route preferences individually in the lobby before queueing');
+      }
 
       const partySize = partyMember
         ? await tx.partyMember.count({ where: { partyId: partyMember.partyId } })
@@ -59,7 +78,7 @@ export class MatchmakingService {
         if (updatedParty.count !== 1) throw new ForbiddenException('Party is not available for matchmaking');
       }
 
-      return tx.matchmakingQueue.create({
+      const queueEntry = await tx.matchmakingQueue.create({
         data: {
           gameId,
           mode,
@@ -69,6 +88,23 @@ export class MatchmakingService {
           status: 'waiting',
         },
       });
+
+      const members = partyMember
+        ? await tx.partyMember.findMany({
+            where: { partyId: partyMember.partyId },
+            select: { userId: true, primaryRole: true, secondaryRole: true },
+          })
+        : [{ userId, primaryRole: primaryRole ?? null, secondaryRole: secondaryRole ?? null }];
+      await tx.matchmakingQueueMember.createMany({
+        data: members.map((member) => ({
+          queueId: queueEntry.id,
+          userId: member.userId,
+          primaryRole: game.slug === 'lol' ? member.primaryRole : null,
+          secondaryRole: game.slug === 'lol' ? member.secondaryRole : null,
+        })),
+      });
+
+      return queueEntry;
     });
 
     return entry;

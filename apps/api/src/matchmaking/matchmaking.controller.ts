@@ -12,7 +12,14 @@ export class MatchmakingController {
 
   @Post('queue')
   async joinQueue(@CurrentUser() user: { id: string }, @Body() body: JoinQueueDto) {
-    return this.mm.joinQueue(user.id, body.gameId, body.mode, body.region);
+    return this.mm.joinQueue(
+      user.id,
+      body.gameId,
+      body.mode,
+      body.region,
+      body.primaryRole,
+      body.secondaryRole,
+    );
   }
 
   @Delete('queue')

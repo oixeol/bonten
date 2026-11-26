@@ -132,6 +132,7 @@ model User {
   partyInvitesReceived  PartyInvite[] @relation("PartyInvitesReceived")
   partyInvitesSent      PartyInvite[] @relation("PartyInvitesSent")
   queueEntries          MatchmakingQueue[] @relation("QueueEntries")
+  matchmakingQueueMembers MatchmakingQueueMember[] @relation("MatchmakingQueueMemberUser")
   matchParticipations   MatchPlayer[] @relation("MatchParticipations")
   playerProfiles        PlayerProfile[]
   playerRatings         PlayerRating[]
@@ -586,6 +587,8 @@ model PartyMember {
   party    Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
   userId   String   @db.Uuid
   user     User     @relation("PartyMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  primaryRole   String?
+  secondaryRole String?
   ready    Boolean  @default(false)
   joinedAt DateTime @default(now())
 
@@ -624,8 +627,25 @@ model MatchmakingQueue {
   status   String   @default("waiting")
   joinedAt DateTime @default(now())
 
+  members  MatchmakingQueueMember[]
+
   @@index([gameId, mode, region, status])
   @@map("matchmaking_queues")
+}
+
+model MatchmakingQueueMember {
+  id            String            @id @default(uuid()) @db.Uuid
+  queueId       String            @db.Uuid
+  queue         MatchmakingQueue  @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  userId        String            @db.Uuid
+  user          User              @relation("MatchmakingQueueMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  primaryRole   String?
+  secondaryRole String?
+  createdAt     DateTime          @default(now())
+
+  @@unique([queueId, userId])
+  @@index([userId])
+  @@map("matchmaking_queue_members")
 }
 
 model Match {
@@ -654,6 +674,7 @@ model MatchPlayer {
   userId  String @db.Uuid
   user    User   @relation("MatchParticipations", fields: [userId], references: [id])
   team    String?
+  role    String?
   placement Int?
   stats   Json?
 

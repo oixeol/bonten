@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { isUUID } from 'class-validator';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.module';
+import { UpdatePartyRolesDto } from './dto/update-party-roles.dto';
 
 @Injectable()
 export class PartiesService {
@@ -245,6 +246,37 @@ export class PartiesService {
 
     await this.prisma.partyMember.update({ where: { id: member.id }, data: { ready } });
     return { ready };
+  }
+
+  async updateMemberRoles(partyId: string, userId: string, roles: UpdatePartyRolesDto) {
+    const hasPrimaryRole = roles.primaryRole !== undefined;
+    const hasSecondaryRole = roles.secondaryRole !== undefined;
+    if (!hasPrimaryRole && !hasSecondaryRole) {
+      throw new BadRequestException('At least one role preference must be provided');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "parties" WHERE "id" = ${partyId}::uuid FOR UPDATE`;
+
+      const party = await tx.party.findUnique({ where: { id: partyId } });
+      if (!party) throw new NotFoundException('Party not found');
+      if (party.status !== 'lobby') throw new ForbiddenException('Role preferences cannot change while queued');
+
+      const member = await tx.partyMember.findFirst({ where: { partyId, userId } });
+      if (!member) throw new NotFoundException('Not a member');
+
+      const primaryRole = hasPrimaryRole ? roles.primaryRole : member.primaryRole;
+      const secondaryRole = hasSecondaryRole ? roles.secondaryRole : member.secondaryRole;
+      if (primaryRole && primaryRole === secondaryRole) {
+        throw new BadRequestException('Primary and secondary roles must be different');
+      }
+
+      return tx.partyMember.update({
+        where: { id: member.id },
+        data: { primaryRole, secondaryRole },
+      });
+    });
   }
 
   async toggleOpen(partyId: string, userId: string) {

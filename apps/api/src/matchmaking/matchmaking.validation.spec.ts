@@ -11,11 +11,18 @@ describe('Matchmaking request validation', () => {
       .resolves.toBeInstanceOf(JoinQueueDto);
   });
 
+  it('accepts valid role preferences', async () => {
+    const body = { gameId, mode: 'competitive', region: 'BR', primaryRole: 'mid', secondaryRole: 'support' };
+    await expect(pipe.transform(body, { type: 'body', metatype: JoinQueueDto }))
+      .resolves.toBeInstanceOf(JoinQueueDto);
+  });
+
   it.each([
     { gameId: 'not-a-uuid', mode: 'competitive', region: 'BR' },
     { gameId, mode: '', region: 'BR' },
     { gameId, mode: 'competitive', region: 'B' },
     { gameId, mode: 'competitive', region: 'BR', partyId: gameId },
+    { gameId, mode: 'competitive', region: 'BR', primaryRole: 'tank' },
   ])('rejects invalid queue request %j', async (body) => {
     await expect(pipe.transform(body, { type: 'body', metatype: JoinQueueDto }))
       .rejects.toBeInstanceOf(BadRequestException);
