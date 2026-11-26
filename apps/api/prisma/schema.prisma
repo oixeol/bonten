@@ -1,0 +1,701 @@
+// BONTEN — modelo de dados (Fase 3: Communities + Channels + Messages + Roles)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ONLINE
+  IDLE
+  DND
+  OFFLINE
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  BLOCKED
+}
+
+enum ChannelType {
+  TEXT
+  VOICE
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  GIF
+  FILE
+  SYSTEM
+}
+
+enum NotificationType {
+  FRIEND_REQUEST
+  FRIEND_ACCEPTED
+  COMMUNITY_INVITE
+  COMMUNITY_JOINED
+  MENTION
+  DM
+  SYSTEM
+}
+
+enum RolePermission {
+  ADMIN
+  MANAGE_CHANNELS
+  MANAGE_ROLES
+  MANAGE_MESSAGES
+  MENTION_EVERYONE
+  READ_MESSAGES
+  SEND_MESSAGES
+  EMBED_LINKS
+  ATTACH_FILES
+  CONNECT_VOICE
+  SPEAK
+  VIDEO
+  STREAM
+  KICK_MEMBERS
+  BAN_MEMBERS
+  MANAGE_COMMUNITY
+}
+
+enum ReportType {
+  SPAM
+  HARASSMENT
+  HATE_SPEECH
+  VIOLENCE
+  ILLEGAL_CONTENT
+  NSFW_CONTENT
+  SELF_HARM
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  UNDER_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum ModerationActionType {
+  WARN
+  MUTE
+  KICK
+  BAN
+  DELETE_MESSAGE
+  REMOVE_MEMBER
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  username     String     @unique
+  email        String     @unique
+  passwordHash String
+  displayName  String
+  avatarUrl    String?
+  bio          String?    @db.VarChar(500)
+  status       UserStatus @default(OFFLINE)
+  locale       String     @default("pt-BR")
+  isVip        Boolean    @default(false)
+  e2eePublicKey String?   // X25519 public key (base64) for E2EE DMs
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  // Relations
+  sentFriendships       Friendship[] @relation("SentFriendships")
+  receivedFriendships   Friendship[] @relation("ReceivedFriendships")
+  ownedCommunities      Community[] @relation("OwnedCommunities")
+  communityMembers      CommunityMember[]
+  channels              Channel[]
+  messages              Message[]
+  invites               Invite[]
+  notifications         Notification[]
+  sentDMs               DM[] @relation("SentDMs")
+  receivedDMs           DM[] @relation("ReceivedDMs")
+  reportsGiven          Report[] @relation("ReportsGiven")
+  reportsReceived       Report[] @relation("ReportsReceived")
+  moderationActions     ModerationLog[] @relation("ModerationActions")
+
+  // Parte 2 — Competitivo
+  ownedTeams            Team[] @relation("OwnedTeams")
+  teamMemberships       TeamMember[] @relation("TeamMemberships")
+  teamApplications      TeamApplication[] @relation("TeamApplications")
+  createdTeamInvites    TeamInvite[] @relation("CreatedTeamInvites")
+  teamAuditActions      TeamAuditLog[] @relation("TeamAuditActor")
+  ledParties            Party[] @relation("LedParties")
+  partyMemberships      PartyMember[] @relation("PartyMemberships")
+  partyInvitesReceived  PartyInvite[] @relation("PartyInvitesReceived")
+  partyInvitesSent      PartyInvite[] @relation("PartyInvitesSent")
+  queueEntries          MatchmakingQueue[] @relation("QueueEntries")
+  matchParticipations   MatchPlayer[] @relation("MatchParticipations")
+  playerProfiles        PlayerProfile[]
+  playerRatings         PlayerRating[]
+
+  @@index([status])
+  @@map("users")
+}
+
+model Friendship {
+  id        String           @id @default(uuid()) @db.Uuid
+  status    FriendshipStatus @default(PENDING)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  senderId   String   @db.Uuid
+  sender     User   @relation("SentFriendships", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId String   @db.Uuid
+  receiver   User   @relation("ReceivedFriendships", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId])
+  @@index([senderId, status])
+  @@index([receiverId, status])
+  @@map("friendships")
+}
+
+model Community {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  inviteCode  String   @unique
+  isPrivate   Boolean  @default(false)
+  ownerId     String   @db.Uuid
+  owner       User     @relation("OwnedCommunities", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members    CommunityMember[]
+  channels   Channel[]
+  roles      Role[]
+  invites    Invite[]
+
+  @@index([ownerId])
+  @@index([inviteCode])
+  @@map("communities")
+}
+
+model CommunityMember {
+  id          String   @id @default(uuid()) @db.Uuid
+  communityId String   @db.Uuid
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId      String?  @db.Uuid
+  role        Role?    @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  joinedAt    DateTime @default(now())
+
+  @@unique([communityId, userId])
+  @@index([userId])
+  @@map("community_members")
+}
+
+model Channel {
+  id          String      @id @default(uuid()) @db.Uuid
+  communityId String      @db.Uuid
+  community   Community   @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  name        String      @db.VarChar(100)
+  type        ChannelType @default(TEXT)
+  isPrivate   Boolean     @default(false)
+  description String?     @db.VarChar(500)
+  position    Int         @default(0)
+  createdBy   String?     @db.Uuid
+  createdByUser User?     @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  messages    Message[]
+
+  @@index([communityId])
+  @@map("channels")
+}
+
+model Message {
+  id          String     @id @default(uuid()) @db.Uuid
+  channelId   String     @db.Uuid
+  channel     Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  authorId    String     @db.Uuid
+  author      User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  content     String     @db.Text
+  type        MessageType @default(TEXT)
+  attachments Json?      // Store attachment metadata as JSON
+  isEdited    Boolean    @default(false)
+  replyToId   String?    @db.Uuid
+  replyTo     Message?   @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies     Message[]  @relation("MessageReplies")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([channelId, createdAt])
+  @@index([authorId])
+  @@map("messages")
+}
+
+model Role {
+  id          String          @id @default(uuid()) @db.Uuid
+  communityId String          @db.Uuid
+  community   Community       @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  name        String          @db.VarChar(50)
+  color       String?         @db.VarChar(7) // Hex color
+  permissions RolePermission[]
+  isDefault   Boolean         @default(false)
+  position    Int             @default(0)
+  createdAt   DateTime        @default(now())
+
+  members     CommunityMember[]
+
+  @@unique([communityId, name])
+  @@index([communityId])
+  @@map("roles")
+}
+
+model Invite {
+  id          String    @id @default(uuid()) @db.Uuid
+  communityId String    @db.Uuid
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  code        String    @unique
+  createdBy   String    @db.Uuid
+  createdByUser User    @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  maxUses     Int?      // null = unlimited
+  uses        Int       @default(0)
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([communityId])
+  @@index([code])
+  @@map("invites")
+}
+
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String           @db.VarChar(200)
+  body      String?          @db.VarChar(500)
+  read      Boolean          @default(false)
+  metadata  Json?            // Store related entity IDs as JSON
+  createdAt DateTime         @default(now())
+
+  @@index([userId, read])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// DM messages with optional E2EE
+model DM {
+  id            String   @id @default(uuid()) @db.Uuid
+  senderId      String   @db.Uuid
+  sender        User     @relation("SentDMs", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId    String   @db.Uuid
+  receiver      User     @relation("ReceivedDMs", fields: [receiverId], references: [id], onDelete: Cascade)
+  content       String?  @db.Text // Plain text for non-E2EE, null for E2EE
+  encryptedContent String? // Encrypted content for E2EE messages
+  isEncrypted   Boolean  @default(false)
+  isRead        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([senderId, createdAt])
+  @@index([receiverId, isRead])
+  @@map("dms")
+}
+
+model Report {
+  id          String          @id @default(uuid()) @db.Uuid
+  reporterId  String          @db.Uuid
+  reporter    User            @relation("ReportsGiven", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetId    String          @db.Uuid
+  target      User            @relation("ReportsReceived", fields: [targetId], references: [id], onDelete: Cascade)
+  type        ReportType
+  reason      String          @db.VarChar(500)
+  evidenceUrl String?         // URL to screenshot/message
+  status      ReportStatus    @default(PENDING)
+  reviewedBy  String?         @db.Uuid
+  action      ModerationActionType?
+  actionReason String?        @db.VarChar(500)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([reporterId, createdAt])
+  @@index([targetId, status])
+  @@index([status])
+  @@map("reports")
+}
+
+model ModerationLog {
+  id           String            @id @default(uuid()) @db.Uuid
+  moderatorId  String            @db.Uuid
+  moderator    User              @relation("ModerationActions", fields: [moderatorId], references: [id])
+  actionType   ModerationActionType
+  targetId     String?           @db.Uuid
+  reason       String?           @db.VarChar(500)
+  reportId     String?           @db.Uuid
+  createdAt    DateTime          @default(now())
+
+  @@index([moderatorId, createdAt])
+  @@map("moderation_logs")
+}
+
+// =============================================================================
+// Parte 2 — Competitivo (Times, Parties, Matchmaking, Ranking, Torneios)
+// =============================================================================
+
+model Game {
+  id              String   @id @default(uuid()) @db.Uuid
+  slug            String   @unique
+  name            String
+  format          String
+  teamSize        Int
+  partySizesAllowed Int[]
+  hasMaps         Boolean  @default(false)
+  hasTeams        Boolean  @default(true)
+  ratingModel     String   @default("elo")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  playerProfiles  PlayerProfile[]
+  playerRatings   PlayerRating[]
+  teams           Team[]
+  matches         Match[]
+  tournaments     Tournament[]
+  seasons         Season[]
+  parties         Party[]
+  queues          MatchmakingQueue[]
+  teamRatings     TeamRating[]
+
+  @@map("games")
+}
+
+model PlayerProfile {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gameId     String   @db.Uuid
+  game       Game     @relation(fields: [gameId], references: [id])
+  externalId String?
+  nickname   String
+  region     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, gameId])
+  @@index([gameId, region])
+  @@map("player_profiles")
+}
+
+model PlayerRating {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gameId    String   @db.Uuid
+  game      Game     @relation(fields: [gameId], references: [id])
+  mode      String
+  rating    Int      @default(1000)
+  rd        Float    @default(350)
+  wins      Int      @default(0)
+  losses    Int      @default(0)
+  matches   Int      @default(0)
+  seasonId  String?  @db.Uuid
+  season    Season?  @relation(fields: [seasonId], references: [id])
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, gameId, mode, seasonId])
+  @@index([gameId, mode, rating])
+  @@map("player_ratings")
+}
+
+model Team {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String   @unique
+  tag             String   @unique
+  logoUrl         String?
+  bannerUrl       String?
+  gameId          String   @db.Uuid
+  game            Game     @relation(fields: [gameId], references: [id])
+  description     String?  @db.VarChar(500)
+  region          String
+  language        String   @default("pt-BR")
+  mode            String?
+  recruitmentOpen Boolean  @default(true)
+  ownerId         String   @db.Uuid
+  owner           User     @relation("OwnedTeams", fields: [ownerId], references: [id])
+  inviteCode      String   @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  members         TeamMember[]
+  invites         TeamInvite[]
+  applications    TeamApplication[]
+  rosters         TeamRoster[]
+  ratings         TeamRating[]
+  tournamentTeams TournamentTeam[]
+  auditLogs       TeamAuditLog[]
+
+  @@index([gameId, region])
+  @@index([recruitmentOpen])
+  @@map("teams")
+}
+
+model TeamMember {
+  id       String    @id @default(uuid()) @db.Uuid
+  teamId   String    @db.Uuid
+  team     Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId   String    @db.Uuid
+  user     User      @relation("TeamMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  role     String    @default("player")
+  color    String?
+  joinedAt DateTime  @default(now())
+  leftAt   DateTime?
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@index([teamId, role])
+  @@map("team_members")
+}
+
+model TeamInvite {
+  id        String    @id @default(uuid()) @db.Uuid
+  teamId    String    @db.Uuid
+  team      Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  code      String    @unique
+  createdBy String    @db.Uuid
+  creator   User      @relation("CreatedTeamInvites", fields: [createdBy], references: [id])
+  expiresAt DateTime?
+  maxUses   Int?
+  uses      Int       @default(0)
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  @@index([teamId, active])
+  @@map("team_invites")
+}
+
+model TeamApplication {
+  id         String   @id @default(uuid()) @db.Uuid
+  teamId     String   @db.Uuid
+  team       Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId     String   @db.Uuid
+  user       User     @relation("TeamApplications", fields: [userId], references: [id], onDelete: Cascade)
+  message    String?  @db.VarChar(500)
+  status     String   @default("pending")
+  reviewedBy String?  @db.Uuid
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([teamId, userId])
+  @@index([teamId, status])
+  @@map("team_applications")
+}
+
+model TeamRoster {
+  id        String   @id @default(uuid()) @db.Uuid
+  teamId    String   @db.Uuid
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name      String
+  players   Json
+  createdAt DateTime @default(now())
+
+  @@index([teamId])
+  @@map("team_rosters")
+}
+
+model TeamAuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  teamId    String   @db.Uuid
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  actorId   String?  @db.Uuid
+  actor     User?    @relation("TeamAuditActor", fields: [actorId], references: [id])
+  action    String
+  targetId  String?  @db.Uuid
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([teamId, createdAt])
+  @@map("team_audit_logs")
+}
+
+model TeamRating {
+  id        String   @id @default(uuid()) @db.Uuid
+  teamId    String   @db.Uuid
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  gameId    String   @db.Uuid
+  game      Game     @relation(fields: [gameId], references: [id])
+  rating    Int      @default(1000)
+  rd        Float    @default(350)
+  wins      Int      @default(0)
+  losses    Int      @default(0)
+  seasonId  String?  @db.Uuid
+  season    Season?  @relation(fields: [seasonId], references: [id])
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, gameId, seasonId])
+  @@index([gameId, rating])
+  @@map("team_ratings")
+}
+
+model Party {
+  id             String   @id @default(uuid()) @db.Uuid
+  leaderId       String   @db.Uuid
+  leader         User     @relation("LedParties", fields: [leaderId], references: [id])
+  gameId         String   @db.Uuid
+  game           Game     @relation(fields: [gameId], references: [id])
+  mode           String?
+  isOpen         Boolean  @default(false)
+  status         String   @default("lobby")
+  voiceChannelId String?  @db.Uuid
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  members  PartyMember[]
+  invites  PartyInvite[]
+  queueEntries MatchmakingQueue[]
+
+  @@index([gameId, status])
+  @@index([leaderId])
+  @@map("parties")
+}
+
+model PartyMember {
+  id       String   @id @default(uuid()) @db.Uuid
+  partyId  String   @db.Uuid
+  party    Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  userId   String   @db.Uuid
+  user     User     @relation("PartyMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  ready    Boolean  @default(false)
+  joinedAt DateTime @default(now())
+
+  @@unique([partyId, userId])
+  @@index([userId])
+  @@map("party_members")
+}
+
+model PartyInvite {
+  id            String   @id @default(uuid()) @db.Uuid
+  partyId       String   @db.Uuid
+  party         Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  invitedUserId String   @db.Uuid
+  invitedUser   User     @relation("PartyInvitesReceived", fields: [invitedUserId], references: [id], onDelete: Cascade)
+  invitedBy     String   @db.Uuid
+  inviter       User     @relation("PartyInvitesSent", fields: [invitedBy], references: [id])
+  status        String   @default("pending")
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([invitedUserId, status])
+  @@index([partyId, status])
+  @@map("party_invites")
+}
+
+model MatchmakingQueue {
+  id       String   @id @default(uuid()) @db.Uuid
+  gameId   String   @db.Uuid
+  game     Game     @relation(fields: [gameId], references: [id])
+  mode     String
+  region   String
+  partyId  String?  @db.Uuid
+  party    Party?   @relation(fields: [partyId], references: [id])
+  userId   String?  @db.Uuid
+  user     User?    @relation("QueueEntries", fields: [userId], references: [id])
+  status   String   @default("waiting")
+  joinedAt DateTime @default(now())
+
+  @@index([gameId, mode, region, status])
+  @@map("matchmaking_queues")
+}
+
+model Match {
+  id         String   @id @default(uuid()) @db.Uuid
+  gameId     String   @db.Uuid
+  game       Game     @relation(fields: [gameId], references: [id])
+  mode       String
+  region     String
+  map        String?
+  status     String   @default("pending")
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  players MatchPlayer[]
+  result  MatchResult?
+
+  @@index([gameId, status, createdAt])
+  @@map("matches")
+}
+
+model MatchPlayer {
+  id      String @id @default(uuid()) @db.Uuid
+  matchId String @db.Uuid
+  match   Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  userId  String @db.Uuid
+  user    User   @relation("MatchParticipations", fields: [userId], references: [id])
+  team    String?
+  placement Int?
+  stats   Json?
+
+  @@unique([matchId, userId])
+  @@index([userId])
+  @@map("match_players")
+}
+
+model MatchResult {
+  id          String   @id @default(uuid()) @db.Uuid
+  matchId     String   @unique @db.Uuid
+  match       Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  winnerTeam  String?
+  confirmedByA Boolean @default(false)
+  confirmedByB Boolean @default(false)
+  disputed    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("match_results")
+}
+
+model Tournament {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  gameId    String   @db.Uuid
+  game      Game     @relation(fields: [gameId], references: [id])
+  format    String
+  status    String   @default("draft")
+  startDate DateTime?
+  endDate   DateTime?
+  createdAt DateTime @default(now())
+
+  teams TournamentTeam[]
+
+  @@index([gameId, status])
+  @@map("tournaments")
+}
+
+model TournamentTeam {
+  id           String     @id @default(uuid()) @db.Uuid
+  tournamentId String     @db.Uuid
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  teamId       String     @db.Uuid
+  team         Team       @relation(fields: [teamId], references: [id])
+  seed         Int?
+  status       String     @default("registered")
+
+  @@unique([tournamentId, teamId])
+  @@map("tournament_teams")
+}
+
+model Season {
+  id        String   @id @default(uuid()) @db.Uuid
+  gameId    String   @db.Uuid
+  game      Game     @relation(fields: [gameId], references: [id])
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  active    Boolean  @default(false)
+
+  playerRatings PlayerRating[]
+  teamRatings   TeamRating[]
+
+  @@index([gameId, active])
+  @@map("seasons")
+}

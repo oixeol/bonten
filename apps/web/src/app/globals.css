@@ -1,0 +1,111 @@
+@import 'tailwindcss';
+
+/* =============================================================================
+   BONTEN Design System — Tokens (Tailwind v4 CSS-first)
+   Seções 2 e 11. Visual sutil e profissional: preto/grafite + laranja.
+   Sem roxo/azul, sem neon, sem glassmorphism.
+   ============================================================================= */
+
+@theme {
+  /* ---- Cores base (paleta oficial, seção 2) ---- */
+  --color-base: #0d0f13; /* preto azulado (fundo da página) */
+  --color-surface: #15171c; /* grafite (cards) */
+  --color-raised: #1e2128; /* cinza de superfícies elevadas */
+  --color-border: #272b34; /* bordas discretas */
+  --color-border-strong: #333844;
+
+  /* ---- Marca / ação ---- */
+  --color-brand: #ff7a00; /* laranja principal */
+  --color-brand-hover: #ff9a3d; /* laranja claro */
+  --color-brand-dim: rgb(255 122 0 / 0.12); /* fundo sutil de destaque */
+
+  /* ---- Texto ---- */
+  --color-fg: #f0f2f6; /* branco */
+  --color-fg-muted: #9aa0b0; /* cinza secundário */
+  --color-fg-subtle: #6b7080;
+
+  /* ---- Feedback ---- */
+  --color-success: #3fb950;
+  --color-danger: #f85149;
+  --color-warning: #d29922;
+
+  /* ---- Tipografia ---- */
+  --font-sans:
+    var(--font-inter), 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto,
+    sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Escala de tamanhos (pesos aplicados via utilitários) */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+
+  /* ---- Raios ---- */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* ---- Sombras (discretas) ---- */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 16px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.45);
+
+  /* ---- Espaçamento base ---- */
+  --spacing: 0.25rem;
+
+  /* ---- Transições ---- */
+  --ease-snappy: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ---- Reset básico e base ---- */
+html,
+body {
+  background-color: var(--color-base);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+/* Fonte de chat (feed/DM): Hanken Grotesk (livre, substituto do Whitney). */
+.font-chat {
+  font-family: var(--font-whitney), var(--font-inter), 'Inter', system-ui, sans-serif;
+}
+
+/* Foco acessível e consistente (não remover outline) */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Scrollbar discreta */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-raised);
+  border-radius: var(--radius-sm);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,23 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+.turbo/
+coverage/
+*.log
+.env
+.env.local
+.env.*.local
+
+# Prisma
+apps/api/prisma/migrations/dev.db*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+*.swp

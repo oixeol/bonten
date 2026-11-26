@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "bonten",
+      "credentials": [
+        { "accessKey": "bonten", "secretKey": "change_me_minio" }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}
