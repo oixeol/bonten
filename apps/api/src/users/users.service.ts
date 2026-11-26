@@ -118,4 +118,11 @@ export class UsersService {
       throw new ConflictException('Chave pública já cadastrada difere. Use o dispositivo original.');
     }
   }
+
+  async resetE2eePublicKey(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { e2eePublicKey: null },
+    });
+  }
 }

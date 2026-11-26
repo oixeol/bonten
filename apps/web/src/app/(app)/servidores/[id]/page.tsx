@@ -562,7 +562,7 @@ export default function ServidorPage() {
                     key={i}
                     className="relative h-16 w-16 overflow-hidden rounded-md border border-border bg-raised"
                   >
-                    <img src={m.url} alt="" className="h-full w-full object-cover" />
+                    <img src={m.url} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
                     <button
                       type="button"
                       onClick={() =>

@@ -21,11 +21,15 @@ export class CompetitiveIntegrityService {
 
   async analyzeMatch(matchId: string, gameId: string, mode: string, players: string[], result: any, durationSeconds: number): Promise<IntegrityAlert[]> {
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
       const res = await fetch(`${this.baseUrl}/analyze/match`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ match_id: matchId, game_slug: gameId, mode, players, result, duration_seconds: durationSeconds }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (!res.ok) return [];
       return (await res.json()) as IntegrityAlert[];
     } catch (err) {

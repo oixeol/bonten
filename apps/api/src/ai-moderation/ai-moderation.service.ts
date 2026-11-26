@@ -33,11 +33,15 @@ export class AiModerationService {
     target_history?: Record<string, any>;
   }): Promise<AiAssessment | null> {
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
       const res = await fetch(`${this.baseUrl}/assess`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(report),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (!res.ok) {
         this.logger.warn(`AI moderation returned ${res.status}`);
         return null;

@@ -443,7 +443,27 @@ function DmChat() {
           )}
         </div>
 
-        {keyError && <p role="alert" className="px-4 py-2 text-sm text-danger">{keyError}</p>}
+        {keyError && (
+          <div role="alert" className="px-4 py-2 text-sm text-danger">
+            <p>{keyError}</p>
+            <button
+              type="button"
+              className="mt-2 rounded-md bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/20"
+              onClick={async () => {
+                try {
+                  await e2eeApi.resetMyPublicKey();
+                  setKeyError(null);
+                  // Re-init
+                  window.location.reload();
+                } catch {
+                  setKeyError('Não foi possível resetar a chave. Tente novamente.');
+                }
+              }}
+            >
+              Resetar chave E2EE
+            </button>
+          </div>
+        )}
         {historyError && <p role="alert" className="px-4 py-2 text-sm text-danger">{historyError}</p>}
         {/* Messages */}
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -542,7 +562,7 @@ function DmChat() {
                     key={i}
                     className="relative h-16 w-16 overflow-hidden rounded-md border border-border bg-raised"
                   >
-                    <img src={m.url} alt="" className="h-full w-full object-cover" />
+                    <img src={m.url} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
                     <button
                       type="button"
                       disabled={sending}

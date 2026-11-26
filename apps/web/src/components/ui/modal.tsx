@@ -35,12 +35,14 @@ export function Modal({
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab' || !panelRef.current) return;
@@ -60,7 +62,7 @@ export function Modal({
         first.focus();
       }
     },
-    [onClose],
+    [],
   );
 
   useEffect(() => {
@@ -69,10 +71,11 @@ export function Modal({
     document.body.style.overflow = 'hidden';
     document.addEventListener('keydown', handleKeyDown);
 
+    // Focus the first input (not button) on open
     const panel = panelRef.current;
     const target = panel?.querySelector<HTMLElement>(
-      'input, button, a[href], select, textarea',
-    );
+      'input:not([disabled]), textarea:not([disabled]), select:not([disabled])',
+    ) ?? panel?.querySelector<HTMLElement>('button:not([disabled])');
     target?.focus();
 
     return () => {

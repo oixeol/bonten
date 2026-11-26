@@ -3,31 +3,16 @@
 import { useState, useEffect } from 'react';
 import { useI18n } from '@/i18n/provider';
 // useAuth available if needed
-import { teamsApi, gamesApi, type Team } from '@/lib/api';
+import { teamsApi, type Team } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Plus, Search, Loader2, Check } from 'lucide-react';
 
-interface Game {
-  id: string;
-  slug: string;
-  name: string;
-  format: string;
-  teamSize: number;
-  partySizesAllowed: number[];
-  hasMaps: boolean;
-  hasTeams: boolean;
-  ratingModel: string;
-}
-
 export default function TimesPage() {
   const { t } = useI18n();
   // user available via useAuth if needed
-
-  const [games, setGames] = useState<Game[]>([]);
-  const [loadingGames, setLoadingGames] = useState(true);
 
   // Create modal
   const [createOpen, setCreateOpen] = useState(false);
@@ -35,12 +20,10 @@ export default function TimesPage() {
   const [createForm, setCreateForm] = useState({
     name: '',
     tag: '',
-    gameId: '',
-    region: '',
+    region: 'BR',
     description: '',
     recruitmentOpen: true,
     language: 'pt-BR',
-    mode: '',
   });
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -54,12 +37,7 @@ export default function TimesPage() {
   const [joining, setJoining] = useState(false);
   const [joinedTeam, setJoinedTeam] = useState<Team | null>(null);
 
-  useEffect(() => {
-    gamesApi.list().then((g) => {
-      setGames(g);
-      if (g.length > 0) setCreateForm((f) => ({ ...f, gameId: g[0].id, region: 'BR' }));
-    }).catch(() => {}).finally(() => setLoadingGames(false));
-  }, []);
+  // Games not needed for team creation (team can play multiple games)
 
   // Check name/tag availability
   const [nameAvailable, setNameAvailable] = useState<boolean | null>(null);
@@ -122,7 +100,7 @@ export default function TimesPage() {
   const resetCreate = () => {
     setCreateOpen(false);
     setCreateStep(1);
-    setCreateForm({ name: '', tag: '', gameId: games[0]?.id || '', region: 'BR', description: '', recruitmentOpen: true, language: 'pt-BR', mode: '' });
+    setCreateForm({ name: '', tag: '', region: 'BR', description: '', recruitmentOpen: true, language: 'pt-BR' });
     setCreateError(null);
     setCreatedTeam(null);
     setNameAvailable(null);
@@ -221,26 +199,12 @@ export default function TimesPage() {
               <>
                 <h3 className="font-medium text-fg">Competitivo</h3>
                 <div>
-                  <label className="text-sm text-fg">Jogo principal</label>
-                  {loadingGames ? (
-                    <div className="flex items-center gap-2 text-sm text-fg-muted"><Loader2 size={16} className="animate-spin" /> Carregando...</div>
-                  ) : (
-                    <select value={createForm.gameId} onChange={(e) => setCreateForm({ ...createForm, gameId: e.target.value })} className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm">
-                      {games.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                    </select>
-                  )}
-                </div>
-                <div>
                   <label className="text-sm text-fg">Região</label>
                   <Input value={createForm.region} onChange={(e) => setCreateForm({ ...createForm, region: e.target.value })} placeholder="Ex: BR" />
                 </div>
-                <div>
-                  <label className="text-sm text-fg">Modalidade</label>
-                  <Input value={createForm.mode} onChange={(e) => setCreateForm({ ...createForm, mode: e.target.value })} placeholder="Ex: 5v5" />
-                </div>
                 <div className="flex justify-between">
                   <Button variant="ghost" onClick={() => setCreateStep(1)}>Voltar</Button>
-                  <Button onClick={() => setCreateStep(3)} disabled={!createForm.gameId || !createForm.region}>Próximo</Button>
+                  <Button onClick={() => setCreateStep(3)} disabled={!createForm.region}>Próximo</Button>
                 </div>
               </>
             )}
@@ -277,7 +241,6 @@ export default function TimesPage() {
                 <div className="space-y-2 rounded-md border border-border bg-raised p-3 text-sm">
                   <p><strong>Nome:</strong> {createForm.name}</p>
                   <p><strong>Tag:</strong> {createForm.tag}</p>
-                  <p><strong>Jogo:</strong> {games.find((g) => g.id === createForm.gameId)?.name}</p>
                   <p><strong>Região:</strong> {createForm.region}</p>
                   <p><strong>Recrutamento:</strong> {createForm.recruitmentOpen ? 'Aberto' : 'Fechado'}</p>
                 </div>

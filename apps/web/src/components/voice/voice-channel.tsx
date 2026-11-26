@@ -597,7 +597,7 @@ function ParticipantItem({
     <li className="flex items-center gap-3 p-2 rounded-lg hover:bg-raised transition-colors group">
       <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand/20">
         {participant.avatarUrl ? (
-          <img src={participant.avatarUrl} alt="" className="h-full w-full rounded-full object-cover" />
+          <img src={participant.avatarUrl} alt="" className="h-full w-full rounded-full object-cover" loading="lazy" decoding="async" />
         ) : (
           <span className="text-sm font-semibold text-brand">
             {participant.name.slice(0, 2).toUpperCase()}

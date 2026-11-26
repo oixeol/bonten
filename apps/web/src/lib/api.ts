@@ -347,6 +347,7 @@ export const dmsApi = {
 export const e2eeApi = {
   getPublicKey: (userId: string) => apiFetch<{ publicKey: string | null }>(`/users/${userId}/e2ee-key`),
   setMyPublicKey: (publicKey: string) => apiFetch<void>('/users/me/e2ee-key', { method: 'PUT', body: { publicKey } }),
+  resetMyPublicKey: () => apiFetch<void>('/users/me/e2ee-key', { method: 'DELETE' }),
 };
 
 export const notificationsApi = {
@@ -400,7 +401,7 @@ export interface TeamApplication {
 }
 
 export const teamsApi = {
-  create: (data: { name: string; tag: string; gameId: string; region: string; description?: string; recruitmentOpen?: boolean; language?: string; mode?: string }) =>
+  create: (data: { name: string; tag: string; gameId?: string; region?: string; description?: string; recruitmentOpen?: boolean; language?: string; mode?: string }) =>
     apiFetch<Team>('/teams', { method: 'POST', body: data }),
   list: (gameId?: string, region?: string, search?: string) =>
     apiFetch<Team[]>(`/teams?${gameId ? `gameId=${gameId}&` : ''}${region ? `region=${region}&` : ''}${search ? `search=${encodeURIComponent(search)}` : ''}`),

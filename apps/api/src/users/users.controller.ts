@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Put, Body, UseGuards, ParseUUIDPipe, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Param, Query, Put, Delete, Body, UseGuards, ParseUUIDPipe, BadRequestException } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard';
 import { UsersService } from './users.service';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -31,6 +31,12 @@ export class UsersController {
       throw new BadRequestException('Invalid public key body');
     }
     await this.usersService.setE2eePublicKey(user.id, body.publicKey);
+    return { success: true };
+  }
+
+  @Delete('me/e2ee-key')
+  async resetMyE2eeKey(@CurrentUser() user: { id: string }) {
+    await this.usersService.resetE2eePublicKey(user.id);
     return { success: true };
   }
 }

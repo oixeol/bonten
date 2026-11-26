@@ -54,8 +54,8 @@ export class TeamsService {
   async create(userId: string, data: {
     name: string;
     tag: string;
-    gameId: string;
-    region: string;
+    gameId?: string;
+    region?: string;
     description?: string;
     recruitmentOpen?: boolean;
     language?: string;
@@ -78,28 +78,30 @@ export class TeamsService {
     const tagExists = await this.prisma.team.findUnique({ where: { tag: data.tag } });
     if (tagExists) throw new ConflictException('Team tag already taken');
 
-    // Elegibilidade: 1 time por jogo
-    const existing = await this.prisma.teamMember.findFirst({
-      where: { userId, leftAt: null, team: { gameId: data.gameId } },
-    });
-    if (existing) throw new ForbiddenException('Already in a team for this game');
+    // Elegibilidade: 1 time por jogo (só se gameId fornecido)
+    if (data.gameId) {
+      const existing = await this.prisma.teamMember.findFirst({
+        where: { userId, leftAt: null, team: { gameId: data.gameId } },
+      });
+      if (existing) throw new ForbiddenException('Already in a team for this game');
 
-    // Cooldown: 3 dias após sair de um time no mesmo jogo
-    const recentLeave = await this.prisma.teamMember.findFirst({
-      where: {
-        userId,
-        leftAt: { not: null, gte: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) },
-        team: { gameId: data.gameId },
-      },
-    });
-    if (recentLeave) throw new ForbiddenException('Cooldown: cannot join/create a team for 3 days after leaving');
+      // Cooldown: 3 dias após sair de um time no mesmo jogo
+      const recentLeave = await this.prisma.teamMember.findFirst({
+        where: {
+          userId,
+          leftAt: { not: null, gte: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) },
+          team: { gameId: data.gameId },
+        },
+      });
+      if (recentLeave) throw new ForbiddenException('Cooldown: cannot join/create a team for 3 days after leaving');
+    }
 
     const team = await this.prisma.team.create({
       data: {
         name: data.name,
         tag: data.tag,
         gameId: data.gameId,
-        region: data.region,
+        region: data.region || 'BR',
         description: data.description,
         recruitmentOpen: data.recruitmentOpen ?? true,
         language: data.language ?? 'pt-BR',

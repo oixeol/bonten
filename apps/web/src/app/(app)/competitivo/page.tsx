@@ -7,6 +7,7 @@ import { rankingApi, gamesApi, teamsApi, type Game } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
+import { CompetitiveSidebar } from '@/components/competitive/competitive-sidebar';
 import { Loader2, Trophy, Users, Swords, TrendingUp } from 'lucide-react';
 
 export default function CompetitivoPage() {
@@ -39,7 +40,9 @@ export default function CompetitivoPage() {
   }, [selectedGame]);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-5 lg:px-6">
+    <div className="flex">
+      <CompetitiveSidebar />
+      <div className="min-w-0 flex-1 px-4 py-5 lg:px-6">
       <header className="mb-5">
         <h1 className="text-2xl font-semibold text-fg">{t('competitive.title')}</h1>
         <p className="mt-1 text-fg-muted">{t('competitive.subtitle')}</p>
@@ -125,6 +128,7 @@ export default function CompetitivoPage() {
           </Card>
         </div>
       )}
+      </div>
     </div>
   );
 }

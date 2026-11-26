@@ -814,5 +814,5 @@ function MediaThumb({ media, full = false }: { media: Media; full?: boolean }) {
   }
   // image e gif: <img> preserva animação do gif (next/image não anima otimizado)
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={media.url} alt="" className={cls} />;
+  return <img src={media.url} alt="" className={cls} loading="lazy" decoding="async" />;
 }

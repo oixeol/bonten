@@ -413,8 +413,8 @@ model Team {
   tag             String   @unique
   logoUrl         String?
   bannerUrl       String?
-  gameId          String   @db.Uuid
-  game            Game     @relation(fields: [gameId], references: [id])
+  gameId          String?  @db.Uuid
+  game            Game?    @relation(fields: [gameId], references: [id])
   description     String?  @db.VarChar(500)
   region          String
   language        String   @default("pt-BR")
