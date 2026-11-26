@@ -116,7 +116,11 @@ export function findMatchGroups(
     };
 
     const result = search(0, 0, 0, 0, 0, !anchorGroupId);
-    return result ? balanceTeams(result, teamSize, requiredRoles) : null;
+    if (!result) return null;
+    const balanced = balanceTeams(result, teamSize, requiredRoles);
+    return balanced
+      ? improveMatchComposition(balanced, eligible, teamSize, requiredRoles, anchorGroupId)
+      : null;
   }
 
   const memo = new Map<string, QueueMatchAssignment[] | null>();
@@ -154,13 +158,10 @@ function balanceTeams(
   assignments: QueueMatchAssignment[],
   teamSize: number,
   requiredRoles: string[],
-): QueueMatchAssignment[] {
+): QueueMatchAssignment[] | null {
   const roleIndexes = new Map(requiredRoles.map((role, index) => [role, index]));
   const allRolesMask = (1 << requiredRoles.length) - 1;
-  let bestDifference = Number.POSITIVE_INFINITY;
-  let bestDistributionDifference = Number.POSITIVE_INFINITY;
-  let bestPremadePlayerDifference = Number.POSITIVE_INFINITY;
-  let bestPremadeGroupDifference = Number.POSITIVE_INFINITY;
+  let bestScore: TeamBalanceScore | null = null;
   let bestChanges = Number.POSITIVE_INFINITY;
   let bestAssignments: QueueMatchAssignment[] | null = null;
 
@@ -183,49 +184,10 @@ function balanceTeams(
         rolesB !== allRolesMask
       ) return;
 
-      const difference = Math.abs(ratingA - ratingB);
-      const teamARatings: number[] = [];
-      const teamBRatings: number[] = [];
-      let premadePlayersA = 0;
-      let premadePlayersB = 0;
-      let premadeGroupsA = 0;
-      let premadeGroupsB = 0;
-      for (const assignment of selected) {
-        const teamRatings = assignment.team === 'A' ? teamARatings : teamBRatings;
-        teamRatings.push(...assignment.group.members.map((member) => member.rating ?? 1000));
-        if (assignment.group.members.length > 1) {
-          if (assignment.team === 'A') {
-            premadePlayersA += assignment.group.members.length;
-            premadeGroupsA += 1;
-          } else {
-            premadePlayersB += assignment.group.members.length;
-            premadeGroupsB += 1;
-          }
-        }
-      }
-      teamARatings.sort((left, right) => left - right);
-      teamBRatings.sort((left, right) => left - right);
-      const distributionDifference = teamARatings.reduce(
-        (total, rating, playerIndex) => total + Math.abs(rating - teamBRatings[playerIndex]),
-        0,
-      );
-      const premadePlayerDifference = Math.abs(premadePlayersA - premadePlayersB);
-      const premadeGroupDifference = Math.abs(premadeGroupsA - premadeGroupsB);
-      const isBetter = difference < bestDifference
-        || (difference === bestDifference && distributionDifference < bestDistributionDifference)
-        || (difference === bestDifference && distributionDifference === bestDistributionDifference
-          && premadePlayerDifference < bestPremadePlayerDifference)
-        || (difference === bestDifference && distributionDifference === bestDistributionDifference
-          && premadePlayerDifference === bestPremadePlayerDifference
-          && premadeGroupDifference < bestPremadeGroupDifference)
-        || (difference === bestDifference && distributionDifference === bestDistributionDifference
-          && premadePlayerDifference === bestPremadePlayerDifference
-          && premadeGroupDifference === bestPremadeGroupDifference && changes < bestChanges);
-      if (isBetter) {
-        bestDifference = difference;
-        bestDistributionDifference = distributionDifference;
-        bestPremadePlayerDifference = premadePlayerDifference;
-        bestPremadeGroupDifference = premadeGroupDifference;
+      const score = getTeamBalanceScore(selected, ratingA, ratingB);
+      const comparison = bestScore ? compareTeamBalanceScores(score, bestScore) : -1;
+      if (comparison < 0 || (comparison === 0 && changes < bestChanges)) {
+        bestScore = score;
         bestChanges = changes;
         bestAssignments = [...selected];
       }
@@ -279,5 +241,115 @@ function balanceTeams(
   };
 
   search(0, 0, 0, 0, 0, 0, 0, 0, []);
-  return bestAssignments ?? assignments;
+  return bestAssignments;
+}
+
+interface TeamBalanceScore {
+  ratingDifference: number;
+  distributionDifference: number;
+  premadePlayerDifference: number;
+  premadeGroupDifference: number;
+}
+
+function getTeamBalanceScore(
+  assignments: QueueMatchAssignment[],
+  ratingA: number,
+  ratingB: number,
+): TeamBalanceScore {
+  const teamARatings: number[] = [];
+  const teamBRatings: number[] = [];
+  let premadePlayersA = 0;
+  let premadePlayersB = 0;
+  let premadeGroupsA = 0;
+  let premadeGroupsB = 0;
+
+  for (const assignment of assignments) {
+    const teamRatings = assignment.team === 'A' ? teamARatings : teamBRatings;
+    teamRatings.push(...assignment.group.members.map((member) => member.rating ?? 1000));
+    if (assignment.group.members.length > 1) {
+      if (assignment.team === 'A') {
+        premadePlayersA += assignment.group.members.length;
+        premadeGroupsA += 1;
+      } else {
+        premadePlayersB += assignment.group.members.length;
+        premadeGroupsB += 1;
+      }
+    }
+  }
+
+  teamARatings.sort((left, right) => left - right);
+  teamBRatings.sort((left, right) => left - right);
+  return {
+    ratingDifference: Math.abs(ratingA - ratingB),
+    distributionDifference: teamARatings.reduce(
+      (total, rating, index) => total + Math.abs(rating - teamBRatings[index]),
+      0,
+    ),
+    premadePlayerDifference: Math.abs(premadePlayersA - premadePlayersB),
+    premadeGroupDifference: Math.abs(premadeGroupsA - premadeGroupsB),
+  };
+}
+
+function compareTeamBalanceScores(left: TeamBalanceScore, right: TeamBalanceScore) {
+  return left.ratingDifference - right.ratingDifference
+    || left.distributionDifference - right.distributionDifference
+    || left.premadePlayerDifference - right.premadePlayerDifference
+    || left.premadeGroupDifference - right.premadeGroupDifference;
+}
+
+function improveMatchComposition(
+  assignments: QueueMatchAssignment[],
+  eligible: QueueMatchGroup[],
+  teamSize: number,
+  requiredRoles: string[],
+  anchorGroupId?: string,
+) {
+  let bestAssignments = assignments;
+  let bestScore = getTeamBalanceScore(
+    assignments,
+    assignments.filter(({ team }) => team === 'A')
+      .flatMap(({ group }) => group.members)
+      .reduce((total, member) => total + (member.rating ?? 1000), 0),
+    assignments.filter(({ team }) => team === 'B')
+      .flatMap(({ group }) => group.members)
+      .reduce((total, member) => total + (member.rating ?? 1000), 0),
+  );
+  let improved = true;
+
+  while (improved) {
+    improved = false;
+    const selectedIds = new Set(bestAssignments.map(({ group }) => group.id));
+    for (let index = 0; index < bestAssignments.length && !improved; index += 1) {
+      const selected = bestAssignments[index];
+      if (selected.group.id === anchorGroupId) continue;
+
+      for (const candidate of eligible) {
+        if (
+          selectedIds.has(candidate.id) ||
+          candidate.members.length !== selected.group.members.length
+        ) continue;
+
+        const proposed = [...bestAssignments];
+        proposed[index] = { group: candidate, team: selected.team };
+        const balanced = balanceTeams(proposed, teamSize, requiredRoles);
+        if (!balanced) continue;
+
+        const ratingA = balanced.filter(({ team }) => team === 'A')
+          .flatMap(({ group }) => group.members)
+          .reduce((total, member) => total + (member.rating ?? 1000), 0);
+        const ratingB = balanced.filter(({ team }) => team === 'B')
+          .flatMap(({ group }) => group.members)
+          .reduce((total, member) => total + (member.rating ?? 1000), 0);
+        const score = getTeamBalanceScore(balanced, ratingA, ratingB);
+        if (compareTeamBalanceScores(score, bestScore) < 0) {
+          bestAssignments = balanced;
+          bestScore = score;
+          improved = true;
+          break;
+        }
+      }
+    }
+  }
+
+  return bestAssignments;
 }

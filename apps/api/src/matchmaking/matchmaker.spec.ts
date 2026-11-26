@@ -116,6 +116,30 @@ describe('matchmaker', () => {
     )).toBe(4);
   });
 
+  it('replaces a selected queue group when an equally sized alternative improves team balance', () => {
+    const ratings = [1000, 1000, 1000, 1600, 1500];
+    const groups = ratings.map((rating, index) => ({
+      id: `player-${index}`,
+      members: [{ userId: `user-${index}`, role: null, rating }],
+    }));
+
+    const result = findMatchGroups(groups, 4, true, 2, [], {
+      anchorGroupId: 'player-0',
+      maxRatingDelta: 800,
+    });
+
+    expect(result?.map(({ group: selected }) => selected.id)).toContain('player-0');
+    expect(result?.map(({ group: selected }) => selected.id)).toContain('player-4');
+    const teamTotals = result?.reduce(
+      (totals, assignment) => {
+        totals[assignment.team!] += assignment.group.members[0].rating ?? 1000;
+        return totals;
+      },
+      { A: 0, B: 0 } as Record<'A' | 'B', number>,
+    );
+    expect(Math.abs((teamTotals?.A ?? 0) - (teamTotals?.B ?? 0))).toBe(100);
+  });
+
   it('widens its allowed rating window as the anchor group waits', () => {
     const groups = [
       { id: 'oldest', members: [{ userId: 'old', role: null, rating: 1000 }] },
