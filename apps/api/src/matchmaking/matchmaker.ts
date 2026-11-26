@@ -19,6 +19,8 @@ export interface MatchmakingConstraints {
   maxRatingDelta?: number;
 }
 
+const MAX_COMPOSITION_CANDIDATES = 24;
+
 export function findMatchGroups(
   groups: QueueMatchGroup[],
   playersPerMatch: number,
@@ -184,7 +186,7 @@ function balanceTeams(
         rolesB !== allRolesMask
       ) return;
 
-      const score = getTeamBalanceScore(selected, ratingA, ratingB);
+      const score = getTeamBalanceScore(selected);
       const comparison = bestScore ? compareTeamBalanceScores(score, bestScore) : -1;
       if (comparison < 0 || (comparison === 0 && changes < bestChanges)) {
         bestScore = score;
@@ -253,8 +255,6 @@ interface TeamBalanceScore {
 
 function getTeamBalanceScore(
   assignments: QueueMatchAssignment[],
-  ratingA: number,
-  ratingB: number,
 ): TeamBalanceScore {
   const teamARatings: number[] = [];
   const teamBRatings: number[] = [];
@@ -279,6 +279,8 @@ function getTeamBalanceScore(
 
   teamARatings.sort((left, right) => left - right);
   teamBRatings.sort((left, right) => left - right);
+  const ratingA = teamARatings.reduce((total, rating) => total + rating, 0);
+  const ratingB = teamBRatings.reduce((total, rating) => total + rating, 0);
   return {
     ratingDifference: Math.abs(ratingA - ratingB),
     distributionDifference: teamARatings.reduce(
@@ -305,48 +307,28 @@ function improveMatchComposition(
   anchorGroupId?: string,
 ) {
   let bestAssignments = assignments;
-  let bestScore = getTeamBalanceScore(
-    assignments,
-    assignments.filter(({ team }) => team === 'A')
-      .flatMap(({ group }) => group.members)
-      .reduce((total, member) => total + (member.rating ?? 1000), 0),
-    assignments.filter(({ team }) => team === 'B')
-      .flatMap(({ group }) => group.members)
-      .reduce((total, member) => total + (member.rating ?? 1000), 0),
-  );
-  let improved = true;
+  let bestScore = getTeamBalanceScore(assignments);
+  const selectedIds = new Set(assignments.map(({ group }) => group.id));
+  const alternatives = eligible
+    .filter((group) => !selectedIds.has(group.id))
+    .slice(0, MAX_COMPOSITION_CANDIDATES);
 
-  while (improved) {
-    improved = false;
-    const selectedIds = new Set(bestAssignments.map(({ group }) => group.id));
-    for (let index = 0; index < bestAssignments.length && !improved; index += 1) {
-      const selected = bestAssignments[index];
-      if (selected.group.id === anchorGroupId) continue;
+  for (let index = 0; index < assignments.length; index += 1) {
+    const selected = assignments[index];
+    if (selected.group.id === anchorGroupId) continue;
 
-      for (const candidate of eligible) {
-        if (
-          selectedIds.has(candidate.id) ||
-          candidate.members.length !== selected.group.members.length
-        ) continue;
+    for (const candidate of alternatives) {
+      if (candidate.members.length !== selected.group.members.length) continue;
 
-        const proposed = [...bestAssignments];
-        proposed[index] = { group: candidate, team: selected.team };
-        const balanced = balanceTeams(proposed, teamSize, requiredRoles);
-        if (!balanced) continue;
+      const proposed = [...assignments];
+      proposed[index] = { group: candidate, team: selected.team };
+      const balanced = balanceTeams(proposed, teamSize, requiredRoles);
+      if (!balanced) continue;
 
-        const ratingA = balanced.filter(({ team }) => team === 'A')
-          .flatMap(({ group }) => group.members)
-          .reduce((total, member) => total + (member.rating ?? 1000), 0);
-        const ratingB = balanced.filter(({ team }) => team === 'B')
-          .flatMap(({ group }) => group.members)
-          .reduce((total, member) => total + (member.rating ?? 1000), 0);
-        const score = getTeamBalanceScore(balanced, ratingA, ratingB);
-        if (compareTeamBalanceScores(score, bestScore) < 0) {
-          bestAssignments = balanced;
-          bestScore = score;
-          improved = true;
-          break;
-        }
+      const score = getTeamBalanceScore(balanced);
+      if (compareTeamBalanceScores(score, bestScore) < 0) {
+        bestAssignments = balanced;
+        bestScore = score;
       }
     }
   }
