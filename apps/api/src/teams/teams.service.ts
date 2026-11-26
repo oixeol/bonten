@@ -21,6 +21,8 @@ const ROLE_HIERARCHY: Record<string, number> = {
   reserve: 1,
 };
 
+const TEAM_ROSTER_ROLES = ['player', 'reserve', 'captain', 'coach', 'assistant_coach', 'analyst', 'manager'];
+
 @Injectable()
 export class TeamsService {
   constructor(private prisma: PrismaService) {}
@@ -111,6 +113,25 @@ export class TeamsService {
       },
     });
 
+    const rosterGames = await this.prisma.game.findMany({
+      where: { hasTeams: true },
+      select: { id: true, name: true },
+    });
+    if (rosterGames.length) {
+      await this.prisma.teamRoster.createMany({
+        data: rosterGames.flatMap((game) =>
+          [1, 2, 3].map((squad) => ({
+            teamId: team.id,
+            gameId: game.id,
+            squad,
+            name: `${team.name} - ${game.name} - Equipe ${squad}`,
+            players: [],
+          })),
+        ),
+        skipDuplicates: true,
+      });
+    }
+
     await this.prisma.teamMember.create({
       data: { teamId: team.id, userId, role: 'owner' },
     });
@@ -131,7 +152,12 @@ export class TeamsService {
         game: true,
         invites: { where: { active: true } },
         applications: { where: { status: 'pending' }, include: { user: true } },
-        rosters: true,
+        rosters: {
+          include: {
+            game: true,
+            members: { include: { user: true }, orderBy: { createdAt: 'asc' } },
+          },
+        },
         ratings: true,
       },
     });
@@ -163,6 +189,14 @@ export class TeamsService {
     });
   }
 
+  async listMine(userId: string) {
+    const memberships = await this.prisma.teamMember.findMany({
+      where: { userId, leftAt: null },
+      select: { teamId: true },
+    });
+    return memberships.map(({ teamId }) => teamId);
+  }
+
   // ---------- Join ----------
 
   async joinByCode(code: string, userId: string) {
@@ -188,6 +222,7 @@ export class TeamsService {
     const member = await this.prisma.teamMember.create({
       data: { teamId: team.id, userId, role: 'player' },
     });
+    await this.addMemberToPrimaryRoster(team.id, userId);
 
     await this.audit(team.id, userId, 'member_joined', userId, { via: 'invite_code' });
 
@@ -246,6 +281,7 @@ export class TeamsService {
     await this.prisma.teamMember.create({
       data: { teamId, userId: applicantId, role: 'player' },
     });
+    await this.addMemberToPrimaryRoster(teamId, applicantId);
 
     await this.audit(teamId, actorId, 'application_approved', applicantId);
 
@@ -312,6 +348,9 @@ export class TeamsService {
     await this.prisma.teamMember.update({
       where: { id: member.id },
       data: { leftAt: new Date() },
+    });
+    await this.prisma.teamRosterMember.deleteMany({
+      where: { userId, roster: { teamId } },
     });
 
     await this.audit(teamId, userId, 'member_left', userId);
@@ -405,6 +444,87 @@ export class TeamsService {
     return { updated: true };
   }
 
+  async updateRoster(teamId: string, actorId: string, rosterId: string, data: { showOwner?: boolean }) {
+    await this.requireRole(teamId, actorId, 'admin');
+    if (typeof data.showOwner !== 'boolean') {
+      throw new BadRequestException('Owner visibility must be a boolean');
+    }
+
+    const roster = await this.prisma.teamRoster.findFirst({ where: { id: rosterId, teamId } });
+    if (!roster) throw new NotFoundException('Roster not found');
+
+    await this.prisma.teamRoster.update({
+      where: { id: roster.id },
+      data: { showOwner: data.showOwner },
+    });
+
+    await this.audit(teamId, actorId, 'roster_owner_visibility_changed', undefined, {
+      gameId: roster.gameId,
+      squad: roster.squad,
+      showOwner: data.showOwner,
+    });
+
+    return { updated: true };
+  }
+
+  async updateRosterMember(teamId: string, actorId: string, rosterId: string, targetUserId: string, role: string | null) {
+    await this.requireRole(teamId, actorId, 'admin');
+
+    const roster = await this.prisma.teamRoster.findFirst({ where: { id: rosterId, teamId } });
+    if (!roster) throw new NotFoundException('Roster not found');
+
+    const target = await this.prisma.teamMember.findFirst({
+      where: { teamId, userId: targetUserId, leftAt: null },
+    });
+    if (!target) throw new NotFoundException('Team member not found');
+    if (target.role === 'owner') {
+      throw new BadRequestException('Owner visibility is managed by the roster settings');
+    }
+    if (role !== null && !TEAM_ROSTER_ROLES.includes(role)) {
+      throw new BadRequestException('Invalid roster role');
+    }
+
+    if (role === null) {
+      await this.prisma.teamRosterMember.deleteMany({
+        where: { rosterId: roster.id, userId: targetUserId },
+      });
+    } else {
+      await this.prisma.teamRosterMember.upsert({
+        where: { rosterId_userId: { rosterId: roster.id, userId: targetUserId } },
+        create: { rosterId: roster.id, userId: targetUserId, role },
+        update: { role },
+      });
+    }
+
+    await this.audit(teamId, actorId, 'roster_member_role_changed', targetUserId, {
+      gameId: roster.gameId,
+      squad: roster.squad,
+      role,
+    });
+
+    return { updated: true };
+  }
+
+  private async addMemberToPrimaryRoster(teamId: string, userId: string) {
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      select: { gameId: true },
+    });
+    if (!team?.gameId) return;
+
+    const roster = await this.prisma.teamRoster.findFirst({
+      where: { teamId, gameId: team.gameId, squad: 1 },
+      select: { id: true },
+    });
+    if (!roster) return;
+
+    await this.prisma.teamRosterMember.upsert({
+      where: { rosterId_userId: { rosterId: roster.id, userId } },
+      create: { rosterId: roster.id, userId, role: 'player' },
+      update: {},
+    });
+  }
+
   async removeMember(teamId: string, actorId: string, targetUserId: string) {
     await this.requireRole(teamId, actorId, 'admin');
 
@@ -417,6 +537,9 @@ export class TeamsService {
     await this.prisma.teamMember.update({
       where: { id: target.id },
       data: { leftAt: new Date() },
+    });
+    await this.prisma.teamRosterMember.deleteMany({
+      where: { userId: targetUserId, roster: { teamId } },
     });
 
     await this.audit(teamId, actorId, 'member_removed', targetUserId);

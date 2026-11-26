@@ -8,6 +8,7 @@ import { LogOut, User, Settings } from 'lucide-react';
 import { BontenLogo } from '@/components/brand/bonten-logo';
 import { useI18n } from '@/i18n/provider';
 import { useAuth } from '@/auth/provider';
+import { teamsApi } from '@/lib/api';
 import { useProfile } from '@/profile/provider';
 import { EditProfileModal } from '@/components/layout/edit-profile-modal';
 import type { MessageKey } from '@/i18n/messages';
@@ -17,13 +18,16 @@ interface NavItem {
   labelKey: MessageKey;
 }
 
-const NAV: NavItem[] = [
+const NAV_LEFT: NavItem[] = [
   { href: '/inicio', labelKey: 'nav.home' },
   { href: '/servidores', labelKey: 'nav.communities' },
   { href: '/jogadores', labelKey: 'nav.players' },
+];
+
+const NAV_PLAY: NavItem = { href: '/jogar', labelKey: 'nav.competitive' };
+
+const NAV_RIGHT: NavItem[] = [
   { href: '/descobrir', labelKey: 'nav.discover' },
-  { href: '/competitivo', labelKey: 'nav.competitive' },
-  { href: '/times', labelKey: 'nav.teams' },
 ];
 
 function initials(name: string): string {
@@ -122,10 +126,50 @@ function UserMenu({ user, openProfile, logout, t }: { user: { id: string; displa
 
 export function Topbar() {
   const { t } = useI18n();
-  const { user, logout } = useAuth();
+  const { user, logout, loading: authLoading } = useAuth();
   const { openProfile } = useProfile();
   const pathname = usePathname();
   const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [teamMembershipStatus, setTeamMembershipStatus] = useState<'loading' | 'member' | 'none' | 'error'>('loading');
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      setTeamMembershipStatus('none');
+      return;
+    }
+
+    let active = true;
+    setTeamMembershipStatus('loading');
+    teamsApi.mine()
+      .then((teamIds) => {
+        if (active) setTeamMembershipStatus(teamIds.length > 0 ? 'member' : 'none');
+      })
+      .catch(() => {
+        if (active) setTeamMembershipStatus('error');
+      });
+
+    return () => { active = false; };
+  }, [authLoading, user?.id]);
+
+  const renderNavItem = (item: NavItem, position = '') => {
+    const active = pathname === item.href
+      || (item.href === '/jogar' && (pathname === '/casual' || pathname.startsWith('/competitivo')));
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        aria-current={active ? 'page' : undefined}
+        className={`${position} rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+          active
+            ? 'bg-raised text-fg'
+            : 'text-fg-muted hover:bg-raised hover:text-fg'
+        }`}
+      >
+        {t(item.labelKey)}
+      </Link>
+    );
+  };
 
   return (
     <>
@@ -137,27 +181,18 @@ export function Topbar() {
           <BontenLogo size={26} />
         </Link>
 
-        <nav
-          className="absolute left-1/2 flex -translate-x-1/2 items-center gap-1"
-          aria-label={t('nav.home')}
-        >
-          {NAV.map((item) => {
-            const active = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? 'page' : undefined}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
-                  active
-                    ? 'bg-raised text-fg'
-                    : 'text-fg-muted hover:bg-raised hover:text-fg'
-                }`}
-              >
-                {t(item.labelKey)}
-              </Link>
-            );
-          })}
+        <nav className="pointer-events-none absolute inset-x-0 top-0 h-full" aria-label={t('nav.mobile')}>
+          <div className="pointer-events-auto absolute right-1/2 top-1/2 mr-12 flex -translate-y-1/2 items-center gap-1">
+            {NAV_LEFT.map((item) => renderNavItem(item))}
+          </div>
+          {renderNavItem(NAV_PLAY, 'pointer-events-auto absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2')}
+          <div className="pointer-events-auto absolute left-1/2 top-1/2 ml-12 flex -translate-y-1/2 items-center gap-1">
+            {NAV_RIGHT.map((item) => renderNavItem(item))}
+            {teamMembershipStatus === 'member' && renderNavItem({ href: '/times', labelKey: 'nav.teams' })}
+            {teamMembershipStatus === 'error' && (
+              <span role="status" className="px-2 text-xs text-danger">{t('nav.teamsUnavailable')}</span>
+            )}
+          </div>
         </nav>
 
         <div className="ml-auto flex items-center gap-1">

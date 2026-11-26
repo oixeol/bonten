@@ -18,6 +18,11 @@ export class RankingController {
     return this.ranking.getTeamLeaderboard(gameId, seasonId, limit ? parseInt(limit) : 50);
   }
 
+  @Get('teams/:gameId/:teamId/rank')
+  async teamRank(@Param('gameId', ParseUUIDPipe) gameId: string, @Param('teamId', ParseUUIDPipe) teamId: string, @Query('scope') scope = 'global') {
+    return this.ranking.getTeamRank(teamId, gameId, scope);
+  }
+
   @Get('player/:userId/:gameId')
   async playerStats(@Param('userId', ParseUUIDPipe) userId: string, @Param('gameId', ParseUUIDPipe) gameId: string) {
     return this.ranking.getPlayerStats(userId, gameId);

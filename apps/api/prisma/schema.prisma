@@ -123,6 +123,7 @@ model User {
   // Parte 2 — Competitivo
   ownedTeams            Team[] @relation("OwnedTeams")
   teamMemberships       TeamMember[] @relation("TeamMemberships")
+  teamRosterMemberships TeamRosterMember[] @relation("TeamRosterUser")
   teamApplications      TeamApplication[] @relation("TeamApplications")
   createdTeamInvites    TeamInvite[] @relation("CreatedTeamInvites")
   teamAuditActions      TeamAuditLog[] @relation("TeamAuditActor")
@@ -131,9 +132,12 @@ model User {
   partyInvitesReceived  PartyInvite[] @relation("PartyInvitesReceived")
   partyInvitesSent      PartyInvite[] @relation("PartyInvitesSent")
   queueEntries          MatchmakingQueue[] @relation("QueueEntries")
+  matchmakingQueueMembers MatchmakingQueueMember[] @relation("MatchmakingQueueMemberUser")
   matchParticipations   MatchPlayer[] @relation("MatchParticipations")
   playerProfiles        PlayerProfile[]
   playerRatings         PlayerRating[]
+  lfgListings           LfgListing[] @relation("LfgListingCreator")
+  lfgApplications       LfgApplication[] @relation("LfgApplicationApplicant")
 
   @@index([status])
   @@map("users")
@@ -349,7 +353,9 @@ model Game {
   name            String
   format          String
   teamSize        Int
+  playersPerMatch Int
   partySizesAllowed Int[]
+  roles           String[] @default([])
   hasMaps         Boolean  @default(false)
   hasTeams        Boolean  @default(true)
   ratingModel     String   @default("elo")
@@ -364,7 +370,9 @@ model Game {
   seasons         Season[]
   parties         Party[]
   queues          MatchmakingQueue[]
+  lfgListings     LfgListing[]
   teamRatings     TeamRating[]
+  teamRosters     TeamRoster[]
 
   @@map("games")
 }
@@ -494,12 +502,32 @@ model TeamRoster {
   id        String   @id @default(uuid()) @db.Uuid
   teamId    String   @db.Uuid
   team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  gameId    String?  @db.Uuid
+  game      Game?    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  squad     Int      @default(1)
   name      String
   players   Json
+  showOwner Boolean  @default(false)
+  members   TeamRosterMember[]
   createdAt DateTime @default(now())
 
+  @@unique([teamId, gameId, squad])
   @@index([teamId])
   @@map("team_rosters")
+}
+
+model TeamRosterMember {
+  id        String     @id @default(uuid()) @db.Uuid
+  rosterId  String     @db.Uuid
+  roster    TeamRoster @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  userId    String     @db.Uuid
+  user      User       @relation("TeamRosterUser", fields: [userId], references: [id], onDelete: Cascade)
+  role      String     @default("player")
+  createdAt DateTime   @default(now())
+
+  @@unique([rosterId, userId])
+  @@index([userId])
+  @@map("team_roster_members")
 }
 
 model TeamAuditLog {
@@ -545,6 +573,8 @@ model Party {
   mode           String?
   isOpen         Boolean  @default(false)
   status         String   @default("lobby")
+  inviteCode     String?  @unique
+  inviteCodeExpiresAt DateTime?
   voiceChannelId String?  @db.Uuid
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -552,9 +582,11 @@ model Party {
   members  PartyMember[]
   invites  PartyInvite[]
   queueEntries MatchmakingQueue[]
+  lfgListing LfgListing?
 
   @@index([gameId, status])
   @@index([leaderId])
+  @@index([inviteCodeExpiresAt])
   @@map("parties")
 }
 
@@ -564,6 +596,7 @@ model PartyMember {
   party    Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
   userId   String   @db.Uuid
   user     User     @relation("PartyMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  role     String?
   ready    Boolean  @default(false)
   joinedAt DateTime @default(now())
 
@@ -589,6 +622,51 @@ model PartyInvite {
   @@map("party_invites")
 }
 
+model LfgListing {
+  id            String   @id @default(uuid()) @db.Uuid
+  creatorId     String   @db.Uuid
+  creator       User     @relation("LfgListingCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  partyId       String   @unique @db.Uuid
+  party         Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  gameId        String   @db.Uuid
+  game          Game     @relation(fields: [gameId], references: [id])
+  mode          String   @db.VarChar(32)
+  region        String   @db.VarChar(16)
+  targetSize    Int
+  desiredRole   String?  @db.VarChar(32)
+  minimumRating Int?
+  maximumRating Int?
+  message       String?  @db.VarChar(240)
+  status        String   @default("active")
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  applications LfgApplication[]
+
+  @@index([gameId, mode, region, status, expiresAt])
+  @@index([creatorId, status])
+  @@map("lfg_listings")
+}
+
+model LfgApplication {
+  id          String     @id @default(uuid()) @db.Uuid
+  listingId   String     @db.Uuid
+  listing     LfgListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  applicantId String     @db.Uuid
+  applicant   User       @relation("LfgApplicationApplicant", fields: [applicantId], references: [id], onDelete: Cascade)
+  role        String?    @db.VarChar(32)
+  message     String?    @db.VarChar(240)
+  status      String     @default("pending")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([listingId, applicantId])
+  @@index([listingId, status])
+  @@index([applicantId, status])
+  @@map("lfg_applications")
+}
+
 model MatchmakingQueue {
   id       String   @id @default(uuid()) @db.Uuid
   gameId   String   @db.Uuid
@@ -601,9 +679,28 @@ model MatchmakingQueue {
   user     User?    @relation("QueueEntries", fields: [userId], references: [id])
   status   String   @default("waiting")
   joinedAt DateTime @default(now())
+  matchId  String?  @db.Uuid
+  match    Match?   @relation(fields: [matchId], references: [id], onDelete: SetNull)
+
+  members  MatchmakingQueueMember[]
 
   @@index([gameId, mode, region, status])
   @@map("matchmaking_queues")
+}
+
+model MatchmakingQueueMember {
+  id            String            @id @default(uuid()) @db.Uuid
+  queueId       String            @db.Uuid
+  queue         MatchmakingQueue  @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  userId        String            @db.Uuid
+  user          User              @relation("MatchmakingQueueMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  role          String?
+  ratingSnapshot Int              @default(1000)
+  createdAt     DateTime          @default(now())
+
+  @@unique([queueId, userId])
+  @@index([userId])
+  @@map("matchmaking_queue_members")
 }
 
 model Match {
@@ -620,6 +717,7 @@ model Match {
 
   players MatchPlayer[]
   result  MatchResult?
+  queueEntries MatchmakingQueue[]
 
   @@index([gameId, status, createdAt])
   @@map("matches")
@@ -632,8 +730,10 @@ model MatchPlayer {
   userId  String @db.Uuid
   user    User   @relation("MatchParticipations", fields: [userId], references: [id])
   team    String?
+  role    String?
   placement Int?
   stats   Json?
+  acceptedAt DateTime?
 
   @@unique([matchId, userId])
   @@index([userId])

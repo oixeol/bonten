@@ -28,6 +28,8 @@ import { RankingModule } from './ranking/ranking.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { CompetitiveIntegrityModule } from './competitive-integrity/competitive-integrity.module';
 import { PenaltiesModule } from './penalties/penalties.module';
+import { RealtimeModule } from './realtime/realtime.module';
+import { LfgModule } from './lfg/lfg.module';
 
 @Module({
   imports: [
@@ -48,6 +50,8 @@ import { PenaltiesModule } from './penalties/penalties.module';
     UploadsModule,
     FriendsModule,
     PresenceModule,
+    RealtimeModule,
+    LfgModule,
     CommunitiesModule,
     ChannelsModule,
     MessagesModule,

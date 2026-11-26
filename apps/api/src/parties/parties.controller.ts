@@ -3,6 +3,8 @@ import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { PartiesService } from './parties.service';
 import { ParseUUIDPipe } from '@nestjs/common';
+import { UpdatePartyRolesDto } from './dto/update-party-roles.dto';
+import { JoinPartyByCodeDto } from './dto/join-party-by-code.dto';
 
 @Controller('parties')
 @UseGuards(AuthGuard)
@@ -17,6 +19,26 @@ export class PartiesController {
   @Get()
   async listAvailable(@Query('gameId') gameId?: string) {
     return this.parties.listAvailable(gameId);
+  }
+
+  @Get('mine')
+  async findMine(@CurrentUser() user: { id: string }) {
+    return this.parties.findMine(user.id);
+  }
+
+  @Post('join-by-code')
+  async joinByCode(@CurrentUser() user: { id: string }, @Body() body: JoinPartyByCodeDto) {
+    return this.parties.joinByCode(user.id, body.code);
+  }
+
+  @Post(':id/invite-code/regenerate')
+  async regenerateInviteCode(@CurrentUser() user: { id: string }, @Param('id', ParseUUIDPipe) id: string) {
+    return this.parties.regenerateInviteCode(id, user.id);
+  }
+
+  @Delete(':id/invite-code')
+  async revokeInviteCode(@CurrentUser() user: { id: string }, @Param('id', ParseUUIDPipe) id: string) {
+    return this.parties.revokeInviteCode(id, user.id);
   }
 
   @Get(':id')
@@ -47,6 +69,15 @@ export class PartiesController {
   @Put(':id/ready')
   async setReady(@CurrentUser() user: { id: string }, @Param('id', ParseUUIDPipe) id: string, @Body() body: { ready: boolean }) {
     return this.parties.setReady(id, user.id, body.ready);
+  }
+
+  @Put(':id/roles')
+  async updateMemberRoles(
+    @CurrentUser() user: { id: string },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: UpdatePartyRolesDto,
+  ) {
+    return this.parties.updateMemberRoles(id, user.id, body);
   }
 
   @Put(':id/open')

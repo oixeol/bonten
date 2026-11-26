@@ -363,8 +363,8 @@ export interface Team {
   tag: string;
   logoUrl: string | null;
   bannerUrl: string | null;
-  gameId: string;
-  game?: { id: string; slug: string; name: string };
+  gameId: string | null;
+  game?: { id: string; slug: string; name: string } | null;
   description: string | null;
   region: string;
   language: string;
@@ -373,6 +373,7 @@ export interface Team {
   ownerId: string;
   inviteCode: string | null;
   members?: TeamMember[];
+  rosters?: TeamRoster[];
   applications?: TeamApplication[];
   ratings?: TeamRating[];
   _count?: { members: number };
@@ -401,6 +402,25 @@ export interface TeamMember {
   leftAt: string | null;
 }
 
+export interface TeamRoster {
+  id: string;
+  teamId: string;
+  gameId: string | null;
+  game: { id: string; slug: string; name: string } | null;
+  squad: number;
+  name: string;
+  showOwner: boolean;
+  members: TeamRosterMember[];
+}
+
+export interface TeamRosterMember {
+  id: string;
+  rosterId: string;
+  userId: string;
+  user: TeamMember['user'];
+  role: string;
+}
+
 export interface TeamApplication {
   id: string;
   teamId: string;
@@ -416,6 +436,7 @@ export const teamsApi = {
     apiFetch<Team>('/teams', { method: 'POST', body: data }),
   list: (gameId?: string, region?: string, search?: string) =>
     apiFetch<Team[]>(`/teams?${gameId ? `gameId=${gameId}&` : ''}${region ? `region=${region}&` : ''}${search ? `search=${encodeURIComponent(search)}` : ''}`),
+  mine: () => apiFetch<string[]>('/teams/mine'),
   findById: (id: string) => apiFetch<Team>(`/teams/${id}`),
   byInviteCode: (code: string) => apiFetch<Team>(`/teams/invite/${code}`),
   update: (id: string, data: Partial<Team>) => apiFetch<Team>(`/teams/${id}`, { method: 'PUT', body: data }),
@@ -429,6 +450,10 @@ export const teamsApi = {
   leave: (id: string) => apiFetch<{ left: boolean }>(`/teams/${id}/leave`, { method: 'DELETE' }),
   transferOwnership: (id: string, newOwnerId: string) => apiFetch<{ transferred: boolean }>(`/teams/${id}/transfer`, { method: 'POST', body: { newOwnerId } }),
   updateMemberRole: (id: string, userId: string, role: string) => apiFetch<{ updated: boolean }>(`/teams/${id}/members/${userId}/role`, { method: 'PUT', body: { role } }),
+  updateRoster: (id: string, rosterId: string, showOwner: boolean) =>
+    apiFetch<{ updated: boolean }>(`/teams/${id}/rosters/${rosterId}`, { method: 'PUT', body: { showOwner } }),
+  updateRosterMember: (id: string, rosterId: string, userId: string, role: string | null) =>
+    apiFetch<{ updated: boolean }>(`/teams/${id}/rosters/${rosterId}/members/${userId}`, { method: 'PUT', body: { role } }),
   removeMember: (id: string, userId: string) => apiFetch<{ removed: boolean }>(`/teams/${id}/members/${userId}`, { method: 'DELETE' }),
   moveMember: (id: string, userId: string, toReserve: boolean) => apiFetch<{ moved: boolean }>(`/teams/${id}/members/${userId}/move`, { method: 'PUT', body: { toReserve } }),
   regenerateInviteCode: (id: string) => apiFetch<{ inviteCode: string }>(`/teams/${id}/invite-code/regenerate`, { method: 'POST' }),
@@ -444,10 +469,25 @@ export interface Party {
   mode: string | null;
   isOpen: boolean;
   status: string;
+  inviteCode?: string | null;
+  inviteCodeExpiresAt?: string | null;
   members?: PartyMember[];
   invites?: PartyInvite[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MatchmakingQueueEntry {
+  id: string;
+  gameId: string;
+  mode: string;
+  region: string;
+  partyId: string | null;
+  userId: string | null;
+  status: 'waiting' | 'matched' | 'cancelled';
+  joinedAt: string;
+  matchId: string | null;
+  game?: { id: string; slug: string; name: string };
 }
 
 export interface PartyMember {
@@ -455,6 +495,7 @@ export interface PartyMember {
   partyId: string;
   userId: string;
   user: { id: string; username: string; displayName: string; avatarUrl: string | null; status: string };
+  role: string | null;
   ready: boolean;
   joinedAt: string;
 }
@@ -472,10 +513,10 @@ export interface PartyInvite {
 }
 
 export const matchmakingApi = {
-  joinQueue: (gameId: string, mode: string, region: string) =>
-    apiFetch<any>('/matchmaking/queue', { method: 'POST', body: { gameId, mode, region } }),
+  joinQueue: (gameId: string, mode: string, region: string, role?: string | null) =>
+    apiFetch<MatchmakingQueueEntry>('/matchmaking/queue', { method: 'POST', body: { gameId, mode, region, role } }),
   leaveQueue: () => apiFetch<{ left: boolean }>('/matchmaking/queue', { method: 'DELETE' }),
-  status: () => apiFetch<any>('/matchmaking/queue/status'),
+  status: () => apiFetch<MatchmakingQueueEntry | null>('/matchmaking/queue/status'),
   getMatch: (id: string) => apiFetch<any>(`/matchmaking/match/${id}`),
   acceptMatch: (id: string) => apiFetch<{ accepted: boolean; matchStarted: boolean }>(`/matchmaking/match/${id}/accept`, { method: 'POST' }),
   declineMatch: (id: string) => apiFetch<{ declined: boolean }>(`/matchmaking/match/${id}/decline`, { method: 'POST' }),
@@ -483,6 +524,12 @@ export const matchmakingApi = {
 
 export const partiesApi = {
   create: (gameId: string, mode?: string) => apiFetch<Party>('/parties', { method: 'POST', body: { gameId, mode } }),
+  mine: () => apiFetch<Party | null>('/parties/mine'),
+  joinByCode: (code: string) => apiFetch<{ joined: boolean; partyId: string; mode: string | null }>('/parties/join-by-code', { method: 'POST', body: { code } }),
+  regenerateInviteCode: (partyId: string) =>
+    apiFetch<{ inviteCode: string; inviteCodeExpiresAt: string }>(`/parties/${partyId}/invite-code/regenerate`, { method: 'POST' }),
+  revokeInviteCode: (partyId: string) =>
+    apiFetch<{ revoked: boolean }>(`/parties/${partyId}/invite-code`, { method: 'DELETE' }),
   listAvailable: (gameId?: string) => apiFetch<Party[]>(`/parties${gameId ? `?gameId=${gameId}` : ''}`),
   findById: (id: string) => apiFetch<Party>(`/parties/${id}`),
   invite: (partyId: string, userId: string) => apiFetch<any>(`/parties/${partyId}/invite`, { method: 'POST', body: { userId } }),
@@ -490,8 +537,77 @@ export const partiesApi = {
   declineInvite: (inviteId: string) => apiFetch<{ declined: boolean }>(`/parties/invites/${inviteId}/decline`, { method: 'POST' }),
   leave: (partyId: string) => apiFetch<{ left: boolean }>(`/parties/${partyId}/leave`, { method: 'DELETE' }),
   setReady: (partyId: string, ready: boolean) => apiFetch<{ ready: boolean }>(`/parties/${partyId}/ready`, { method: 'PUT', body: { ready } }),
+  updateRole: (partyId: string, gameId: string, role: string | null) =>
+    apiFetch<PartyMember>(`/parties/${partyId}/roles`, { method: 'PUT', body: { gameId, role } }),
   toggleOpen: (partyId: string) => apiFetch<{ isOpen: boolean }>(`/parties/${partyId}/open`, { method: 'PUT' }),
   removeMember: (partyId: string, userId: string) => apiFetch<{ removed: boolean }>(`/parties/${partyId}/members/${userId}`, { method: 'DELETE' }),
+};
+
+export interface LfgListing {
+  id: string;
+  creatorId: string;
+  partyId: string;
+  gameId: string;
+  mode: string;
+  region: string;
+  targetSize: number;
+  desiredRole: string | null;
+  minimumRating: number | null;
+  maximumRating: number | null;
+  message: string | null;
+  status: string;
+  expiresAt: string;
+  creator: { id: string; username: string; displayName: string; avatarUrl: string | null };
+  game: { id: string; slug: string; name: string; roles: string[] };
+  party: {
+    id: string;
+    status: string;
+    members: Array<{
+      id: string;
+      userId: string;
+      role: string | null;
+      user: { id: string; username: string; displayName: string; avatarUrl: string | null };
+    }>;
+  };
+  applications: Array<{
+    id: string;
+    applicantId?: string;
+    status: string;
+    role: string | null;
+    message: string | null;
+    applicant?: { id: string; username: string; displayName: string; avatarUrl: string | null };
+  }>;
+}
+
+export const lfgApi = {
+  list: (filters: { gameId?: string; mode?: string; region?: string } = {}) => {
+    const query = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) query.set(key, value);
+    });
+    const suffix = query.toString();
+    return apiFetch<LfgListing[]>(`/lfg${suffix ? `?${suffix}` : ''}`);
+  },
+  mine: () => apiFetch<LfgListing[]>('/lfg/mine'),
+  create: (data: {
+    gameId: string;
+    mode: string;
+    region: string;
+    targetSize: number;
+    desiredRole?: string;
+    minimumRating?: number;
+    maximumRating?: number;
+    message?: string;
+    partyId?: string;
+  }) => apiFetch<Pick<LfgListing, 'id' | 'partyId' | 'status' | 'expiresAt'>>('/lfg', { method: 'POST', body: data }),
+  apply: (listingId: string, data: { role?: string; message?: string } = {}) =>
+    apiFetch<{ id: string; status: string }>(`/lfg/${listingId}/apply`, { method: 'POST', body: data }),
+  accept: (listingId: string, applicationId: string) =>
+    apiFetch<{ accepted: boolean; partyId: string }>(`/lfg/${listingId}/applications/${applicationId}/accept`, { method: 'POST' }),
+  reject: (listingId: string, applicationId: string) =>
+    apiFetch<{ rejected: boolean }>(`/lfg/${listingId}/applications/${applicationId}/reject`, { method: 'POST' }),
+  cancel: (listingId: string) =>
+    apiFetch<{ cancelled: boolean }>(`/lfg/${listingId}`, { method: 'DELETE' }),
 };
 
 export interface Game {
@@ -500,7 +616,9 @@ export interface Game {
   name: string;
   format: string;
   teamSize: number;
+  playersPerMatch?: number;
   partySizesAllowed: number[];
+  roles?: string[];
   hasMaps: boolean;
   hasTeams: boolean;
   ratingModel: string;
@@ -523,6 +641,8 @@ export const rankingApi = {
     apiFetch<any[]>(`/ranking/leaderboard/${gameId}?mode=${mode || 'ranked'}&limit=${limit || 50}`),
   teamLeaderboard: (gameId: string, limit?: number) =>
     apiFetch<any[]>(`/ranking/teams/${gameId}?limit=${limit || 50}`),
+  teamRank: (gameId: string, teamId: string, scope: 'global' | 'regional') =>
+    apiFetch<{ rank: number; total: number; region: string | null; rating: number } | null>(`/ranking/teams/${gameId}/${teamId}/rank?scope=${scope}`),
   playerStats: (userId: string, gameId: string) =>
     apiFetch<any>(`/ranking/player/${userId}/${gameId}`),
   playerHistory: (userId: string, gameId: string, limit?: number, offset?: number) =>

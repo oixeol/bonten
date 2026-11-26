@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -28,6 +28,43 @@ export class RankingService {
       orderBy: { rating: 'desc' },
       take: limit,
     });
+  }
+
+  async getTeamRank(teamId: string, gameId: string, scope: string) {
+    if (scope !== 'global' && scope !== 'regional') {
+      throw new BadRequestException('Invalid ranking scope');
+    }
+
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      select: { region: true },
+    });
+    if (!team) throw new NotFoundException('Team not found');
+
+    const rating = await this.prisma.teamRating.findFirst({
+      where: { teamId, gameId },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!rating) return null;
+
+    const rankedTeams = {
+      gameId,
+      seasonId: rating.seasonId,
+      ...(scope === 'regional' ? { team: { region: team.region } } : {}),
+    };
+    const [ahead, total] = await Promise.all([
+      this.prisma.teamRating.count({
+        where: { ...rankedTeams, rating: { gt: rating.rating } },
+      }),
+      this.prisma.teamRating.count({ where: rankedTeams }),
+    ]);
+
+    return {
+      rank: ahead + 1,
+      total,
+      region: scope === 'regional' ? team.region : null,
+      rating: rating.rating,
+    };
   }
 
   async getPlayerStats(userId: string, gameId: string) {
