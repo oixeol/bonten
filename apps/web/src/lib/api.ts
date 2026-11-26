@@ -374,8 +374,19 @@ export interface Team {
   inviteCode: string | null;
   members?: TeamMember[];
   applications?: TeamApplication[];
+  ratings?: TeamRating[];
   _count?: { members: number };
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface TeamRating {
+  id: string;
+  teamId: string;
+  gameId: string;
+  rating: number;
+  wins: number;
+  losses: number;
   updatedAt: string;
 }
 
