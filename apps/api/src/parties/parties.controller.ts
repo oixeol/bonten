@@ -19,6 +19,16 @@ export class PartiesController {
     return this.parties.listAvailable(gameId);
   }
 
+  @Get('mine')
+  async findMine(@CurrentUser() user: { id: string }) {
+    return this.parties.findMine(user.id);
+  }
+
+  @Post('join-by-code')
+  async joinByCode(@CurrentUser() user: { id: string }, @Body() body: { code: string }) {
+    return this.parties.joinByCode(user.id, body.code);
+  }
+
   @Get(':id')
   async findById(@Param('id', ParseUUIDPipe) id: string) {
     return this.parties.findById(id);

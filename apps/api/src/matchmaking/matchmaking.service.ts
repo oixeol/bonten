@@ -1,81 +1,117 @@
-import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ConfigService } from '@nestjs/config';
-// isUUID available if needed
 
 @Injectable()
 export class MatchmakingService {
-  constructor(
-    private prisma: PrismaService,
-    private config: ConfigService,
-  ) {}
-
-  private getMatchmakingUrl(): string {
-    return this.config.get<string>('MATCHMAKING_URL') ?? 'http://localhost:8080';
-  }
+  constructor(private prisma: PrismaService) {}
 
   async joinQueue(userId: string, gameId: string, mode: string, region: string) {
-    // Verificar se o jogador já está em uma party ou fila
-    const existingQueue = await this.prisma.matchmakingQueue.findFirst({
-      where: { userId, status: 'waiting' },
-    });
-    if (existingQueue) throw new ForbiddenException('Already in queue');
+    const entry = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
 
-    // Verificar se está em uma party ativa
-    const partyMember = await this.prisma.partyMember.findFirst({
-      where: { userId, party: { status: { in: ['lobby', 'in_queue'] } } },
-    });
-
-    const entry = await this.prisma.matchmakingQueue.create({
-      data: {
-        gameId,
-        mode,
-        region,
-        userId: partyMember ? null : userId,
-        partyId: partyMember?.partyId ?? null,
-        status: 'waiting',
-      },
-    });
-
-    // Notificar o serviço Rust (se disponível)
-    try {
-      await fetch(`${this.getMatchmakingUrl()}/queue/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entryId: entry.id, gameId, mode, region, userId, partyId: partyMember?.partyId }),
+      const partyMember = await tx.partyMember.findFirst({
+        where: { userId, party: { status: { in: ['lobby', 'in_queue'] } } },
+        include: { party: true },
       });
-    } catch {
-      // Rust service unavailable; NestJS handles queue directly
-    }
+      if (partyMember?.party.status === 'in_queue') {
+        throw new ForbiddenException('Already in queue');
+      }
+
+      if (partyMember) {
+        await tx.$queryRaw`SELECT "id" FROM "parties" WHERE "id" = ${partyMember.partyId}::uuid FOR UPDATE`;
+      }
+
+      const game = await tx.game.findUnique({
+        where: { id: gameId },
+        select: { partySizesAllowed: true },
+      });
+      if (!game) throw new NotFoundException('Game not found');
+
+      const partySize = partyMember
+        ? await tx.partyMember.count({ where: { partyId: partyMember.partyId } })
+        : 1;
+      if (partySize === 4) {
+        throw new BadRequestException('Lobbies com 4 jogadores não podem entrar na fila. Remova um jogador ou convide mais um.');
+      }
+      if (!game.partySizesAllowed.includes(partySize)) {
+        throw new BadRequestException(
+          `Este jogo permite grupos de ${game.partySizesAllowed.join(', ')} jogadores; o lobby atual tem ${partySize}.`,
+        );
+      }
+
+      const queueScope = partyMember ? { partyId: partyMember.partyId } : { userId };
+      const existingQueue = await tx.matchmakingQueue.findFirst({
+        where: { ...queueScope, status: { in: ['waiting', 'matched'] } },
+      });
+      if (existingQueue) throw new ForbiddenException('Already in queue');
+
+      if (partyMember) {
+        const updatedParty = await tx.party.updateMany({
+          where: { id: partyMember.partyId, status: 'lobby' },
+          data: { status: 'in_queue', gameId },
+        });
+        if (updatedParty.count !== 1) throw new ForbiddenException('Party is not available for matchmaking');
+      }
+
+      return tx.matchmakingQueue.create({
+        data: {
+          gameId,
+          mode,
+          region,
+          userId: partyMember ? null : userId,
+          partyId: partyMember?.partyId ?? null,
+          status: 'waiting',
+        },
+      });
+    });
 
     return entry;
   }
 
   async leaveQueue(userId: string) {
-    const entry = await this.prisma.matchmakingQueue.findFirst({
-      where: { userId, status: 'waiting' },
-    });
-    if (!entry) throw new NotFoundException('Not in queue');
-
-    await this.prisma.matchmakingQueue.update({
-      where: { id: entry.id },
-      data: { status: 'cancelled' },
-    });
-
-    try {
-      await fetch(`${this.getMatchmakingUrl()}/queue/leave`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entryId: entry.id }),
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
+      const partyMember = await tx.partyMember.findFirst({
+        where: { userId, party: { status: 'in_queue' } },
       });
-    } catch {}
+      if (partyMember) {
+        await tx.$queryRaw`SELECT "id" FROM "parties" WHERE "id" = ${partyMember.partyId}::uuid FOR UPDATE`;
+      }
+
+      const queueScope = partyMember ? { partyId: partyMember.partyId } : { userId };
+      const queueEntry = await tx.matchmakingQueue.findFirst({
+        where: { ...queueScope, status: 'waiting' },
+      });
+      if (!queueEntry) throw new NotFoundException('Not in queue');
+
+      await tx.matchmakingQueue.update({
+        where: { id: queueEntry.id },
+        data: { status: 'cancelled' },
+      });
+      if (partyMember) {
+        await tx.party.updateMany({
+          where: { id: partyMember.partyId, status: 'in_queue' },
+          data: { status: 'lobby' },
+        });
+      }
+    });
 
     return { left: true };
   }
 
   async getQueueStatus(userId: string) {
+    const partyMember = await this.prisma.partyMember.findFirst({
+      where: { userId, party: { status: 'in_queue' } },
+    });
+    const queueScope = partyMember ? { partyId: partyMember.partyId } : { userId };
     const entry = await this.prisma.matchmakingQueue.findFirst({
-      where: { userId, status: { in: ['waiting', 'matched'] } },
+      where: { ...queueScope, status: { in: ['waiting', 'matched'] } },
       include: { game: true },
       orderBy: { joinedAt: 'desc' },
     });
@@ -85,6 +121,7 @@ export class MatchmakingService {
   async acceptMatch(matchId: string, userId: string) {
     const match = await this.prisma.match.findUnique({ where: { id: matchId } });
     if (!match) throw new NotFoundException('Match not found');
+    if (match.status !== 'pending') throw new ConflictException('Match is not awaiting confirmation');
 
     const player = await this.prisma.matchPlayer.findFirst({
       where: { matchId, userId },
@@ -110,33 +147,31 @@ export class MatchmakingService {
     return { accepted: true, matchStarted: updated?.confirmedByA && updated?.confirmedByB };
   }
 
-  async declineMatch(matchId: string, _userId: string) {
-    const match = await this.prisma.match.findUnique({ where: { id: matchId } });
-    if (!match) throw new NotFoundException('Match not found');
+  async declineMatch(matchId: string, userId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const match = await tx.match.findFirst({
+        where: { id: matchId, players: { some: { userId } } },
+        select: { id: true, status: true },
+      });
+      if (!match) throw new NotFoundException('Match not found');
+      if (match.status !== 'pending') throw new ConflictException('Match is not awaiting confirmation');
 
-    await this.prisma.match.update({ where: { id: matchId }, data: { status: 'cancelled' } });
-    await this.prisma.matchResult.update({ where: { matchId }, data: { disputed: true } });
+      const updated = await tx.match.updateMany({
+        where: { id: matchId, status: 'pending' },
+        data: { status: 'cancelled' },
+      });
+      if (updated.count !== 1) throw new ConflictException('Match is no longer awaiting confirmation');
+    });
 
     return { declined: true };
   }
 
-  async getMatch(matchId: string) {
-    return this.prisma.match.findUnique({
-      where: { id: matchId },
+  async getMatch(matchId: string, userId: string) {
+    const match = await this.prisma.match.findFirst({
+      where: { id: matchId, players: { some: { userId } } },
       include: { players: { include: { user: true } }, result: true, game: true },
     });
-  }
-
-  // Party size validation (seção 12.3.1)
-  validatePartySize(gameSlug: string, partySize: number, mode: string): boolean {
-    if (gameSlug === 'tft') {
-      return partySize === 1 || partySize === 2; // solo or double up
-    }
-    // 5v5 games
-    if (mode.includes('wingman') || mode.includes('2v2')) {
-      return partySize === 2;
-    }
-    // Competitive 5v5
-    return [1, 2, 3, 5].includes(partySize);
+    if (!match) throw new NotFoundException('Match not found');
+    return match;
   }
 }

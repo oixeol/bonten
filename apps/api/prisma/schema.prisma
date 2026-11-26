@@ -123,6 +123,7 @@ model User {
   // Parte 2 — Competitivo
   ownedTeams            Team[] @relation("OwnedTeams")
   teamMemberships       TeamMember[] @relation("TeamMemberships")
+  teamRosterMemberships TeamRosterMember[] @relation("TeamRosterUser")
   teamApplications      TeamApplication[] @relation("TeamApplications")
   createdTeamInvites    TeamInvite[] @relation("CreatedTeamInvites")
   teamAuditActions      TeamAuditLog[] @relation("TeamAuditActor")
@@ -365,6 +366,7 @@ model Game {
   parties         Party[]
   queues          MatchmakingQueue[]
   teamRatings     TeamRating[]
+  teamRosters     TeamRoster[]
 
   @@map("games")
 }
@@ -494,12 +496,32 @@ model TeamRoster {
   id        String   @id @default(uuid()) @db.Uuid
   teamId    String   @db.Uuid
   team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  gameId    String?  @db.Uuid
+  game      Game?    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  squad     Int      @default(1)
   name      String
   players   Json
+  showOwner Boolean  @default(false)
+  members   TeamRosterMember[]
   createdAt DateTime @default(now())
 
+  @@unique([teamId, gameId, squad])
   @@index([teamId])
   @@map("team_rosters")
+}
+
+model TeamRosterMember {
+  id        String     @id @default(uuid()) @db.Uuid
+  rosterId  String     @db.Uuid
+  roster    TeamRoster @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  userId    String     @db.Uuid
+  user      User       @relation("TeamRosterUser", fields: [userId], references: [id], onDelete: Cascade)
+  role      String     @default("player")
+  createdAt DateTime   @default(now())
+
+  @@unique([rosterId, userId])
+  @@index([userId])
+  @@map("team_roster_members")
 }
 
 model TeamAuditLog {

@@ -19,6 +19,11 @@ export class TeamsController {
     return this.teams.listOpen(gameId, region, search);
   }
 
+  @Get('mine')
+  async listMine(@CurrentUser() user: { id: string }) {
+    return this.teams.listMine(user.id);
+  }
+
   @Get('invite/:code')
   async byCode(@Param('code') code: string) {
     return this.teams.findByInviteCode(code);
@@ -82,6 +87,16 @@ export class TeamsController {
   @Put(':id/members/:userId/role')
   async updateRole(@CurrentUser() user: { id: string }, @Param('id', ParseUUIDPipe) id: string, @Param('userId', ParseUUIDPipe) targetUserId: string, @Body() body: { role: string }) {
     return this.teams.updateMemberRole(id, user.id, targetUserId, body.role);
+  }
+
+  @Put(':id/rosters/:rosterId')
+  async updateRoster(@CurrentUser() user: { id: string }, @Param('id', ParseUUIDPipe) id: string, @Param('rosterId', ParseUUIDPipe) rosterId: string, @Body() body: { showOwner?: boolean }) {
+    return this.teams.updateRoster(id, user.id, rosterId, body);
+  }
+
+  @Put(':id/rosters/:rosterId/members/:userId')
+  async updateRosterMember(@CurrentUser() user: { id: string }, @Param('id', ParseUUIDPipe) id: string, @Param('rosterId', ParseUUIDPipe) rosterId: string, @Param('userId', ParseUUIDPipe) targetUserId: string, @Body() body: { role: string | null }) {
+    return this.teams.updateRosterMember(id, user.id, rosterId, targetUserId, body.role);
   }
 
   @Delete(':id/members/:userId')
